@@ -1,0 +1,24 @@
+version: '3.8'
+
+# Development docker-compose configuration
+# Run with: docker-compose -f docker-compose.dev.yml up
+
+services:
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=quickquote
+      - POSTGRES_USER=quickquote
+      - POSTGRES_PASSWORD=quickquote
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quickquote"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_dev_data:

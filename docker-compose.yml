@@ -1,0 +1,66 @@
+version: '3.8'
+
+# Local development docker-compose
+# Run with: docker-compose up -d
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quickquote-app
+    ports:
+      - "8080:8080"
+    environment:
+      - APP_ENV=development
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - SERVER_ENV=development
+      - DATABASE_HOST=db
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=quickquote
+      - DATABASE_USER=quickquote
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-quickquote}
+      - DATABASE_SSLMODE=disable
+      - BLAND_API_KEY=${BLAND_API_KEY}
+      - BLAND_INBOUND_NUMBER=${BLAND_INBOUND_NUMBER}
+      - BLAND_WEBHOOK_SECRET=${BLAND_WEBHOOK_SECRET:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - SESSION_SECRET=${SESSION_SECRET:-dev-session-secret-change-in-prod}
+      - SESSION_DURATION=24h
+      - APP_PUBLIC_URL=${APP_PUBLIC_URL:-http://localhost:8080}
+      - LOG_LEVEL=debug
+      - LOG_FORMAT=console
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - quickquote-network
+
+  db:
+    image: postgres:16-alpine
+    container_name: quickquote-db
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=quickquote
+      - POSTGRES_USER=quickquote
+      - POSTGRES_PASSWORD=${DATABASE_PASSWORD:-quickquote}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quickquote -d quickquote"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - quickquote-network
+
+volumes:
+  postgres_data:
+
+networks:
+  quickquote-network:
+    driver: bridge

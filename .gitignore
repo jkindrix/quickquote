@@ -1,0 +1,32 @@
+# Environment files with secrets
+.env
+.env.local
+.env.production
+
+# Binaries
+quickquote
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test coverage
+*.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+*.tmp
+
+# Database data
+data/

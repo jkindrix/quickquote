@@ -1,0 +1,86 @@
+version: '3.8'
+
+# Production docker-compose with Traefik integration
+# Run with: docker-compose -f docker-compose.prod.yml up -d
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quickquote-app
+    restart: unless-stopped
+    networks:
+      - web
+      - quickquote-internal
+    environment:
+      - APP_ENV=production
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - SERVER_ENV=production
+      - DATABASE_HOST=quickquote-db
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=quickquote
+      - DATABASE_USER=quickquote
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+      - DATABASE_SSLMODE=disable
+      - BLAND_API_KEY=${BLAND_API_KEY}
+      - BLAND_INBOUND_NUMBER=${BLAND_INBOUND_NUMBER}
+      - BLAND_WEBHOOK_SECRET=${BLAND_WEBHOOK_SECRET:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - SESSION_SECRET=${SESSION_SECRET}
+      - SESSION_DURATION=24h
+      - APP_PUBLIC_URL=https://quickquote.jdok.dev
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=web"
+      # HTTPS Router
+      - "traefik.http.routers.quickquote.rule=Host(`quickquote.jdok.dev`)"
+      - "traefik.http.routers.quickquote.entrypoints=websecure"
+      - "traefik.http.routers.quickquote.tls=true"
+      - "traefik.http.routers.quickquote.tls.certresolver=cloudflare"
+      - "traefik.http.services.quickquote.loadbalancer.server.port=8080"
+      - "traefik.http.routers.quickquote.middlewares=public-chain@file"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    depends_on:
+      quickquote-db:
+        condition: service_healthy
+
+  quickquote-db:
+    image: postgres:16-alpine
+    container_name: quickquote-db
+    restart: unless-stopped
+    networks:
+      - quickquote-internal
+    environment:
+      - POSTGRES_DB=quickquote
+      - POSTGRES_USER=quickquote
+      - POSTGRES_PASSWORD=${DATABASE_PASSWORD}
+    volumes:
+      - quickquote_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quickquote -d quickquote"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+networks:
+  web:
+    external: true
+  quickquote-internal:
+    driver: bridge
+
+volumes:
+  quickquote_postgres_data:
