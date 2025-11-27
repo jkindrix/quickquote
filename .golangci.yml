@@ -1,0 +1,139 @@
+# golangci-lint configuration for QuickQuote
+# Run: golangci-lint run
+# Docs: https://golangci-lint.run/usage/configuration/
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    # Core linters
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+    # Security
+    - gosec
+
+    # Quality
+    - dupl
+    - errorlint
+    - goconst
+    - gocritic
+    - gocyclo
+    - misspell
+    - nakedret
+    - nilerr
+    - noctx
+    - prealloc
+    - revive
+    - sqlclosecheck
+    - unconvert
+    - unparam
+    - whitespace
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: false
+    exclude-functions:
+      - (io.Closer).Close
+      - (*database/sql.Rows).Close
+      - (*go.uber.org/zap.Logger).Sync
+
+  govet:
+    disable:
+      - shadow
+
+  gocyclo:
+    min-complexity: 20
+
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - performance
+      - style
+    disabled-checks:
+      - whyNoLint
+      - hugeParam
+
+  gosec:
+    excludes:
+      - G104
+      - G101
+      - G115
+
+  misspell:
+    locale: US
+
+  nakedret:
+    max-func-lines: 30
+
+  revive:
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unreachable-code
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - dupl
+        - gocyclo
+        - errcheck
+        - gosec
+        - goconst
+        - gocritic
+        - errorlint
+        - prealloc
+        - unparam
+
+    - text: 'shadow: declaration of "err"'
+      linters:
+        - govet
+
+    # Allow stuttering names for voice provider packages (webhook payload types)
+    - path: internal/voiceprovider/
+      linters:
+        - revive
+      text: "stutters"
+
+    # Allow stuttering names for validation package
+    - path: internal/validation/
+      linters:
+        - revive
+      text: "stutters"
+
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+output:
+  print-issued-lines: true
+  print-linter-name: true
+  sort-results: true

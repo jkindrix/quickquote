@@ -1,0 +1,75 @@
+# Pre-commit hooks for QuickQuote
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+# Docs: https://pre-commit.com/
+
+repos:
+  # Standard pre-commit hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  # Go-specific hooks using local commands
+  - repo: local
+    hooks:
+      # Build check - fastest feedback
+      - id: go-build
+        name: go build
+        entry: bash -c 'go build ./... 2>&1 || (echo "Build failed" && exit 1)'
+        language: system
+        pass_filenames: false
+        types: [go]
+
+      # Format check
+      - id: go-fmt
+        name: go fmt
+        entry: bash -c 'test -z "$(gofmt -l . | tee /dev/stderr)"'
+        language: system
+        pass_filenames: false
+        types: [go]
+
+      # Vet - standard static analysis
+      - id: go-vet
+        name: go vet
+        entry: go vet ./...
+        language: system
+        pass_filenames: false
+        types: [go]
+
+      # Mod tidy - ensure dependencies are clean
+      - id: go-mod-tidy
+        name: go mod tidy
+        entry: bash -c 'go mod tidy && git diff --exit-code go.mod go.sum'
+        language: system
+        pass_filenames: false
+        types: [go]
+
+      # Tests - run short tests only in pre-commit
+      - id: go-test
+        name: go test (short)
+        entry: go test -short -race ./...
+        language: system
+        pass_filenames: false
+        types: [go]
+
+  # golangci-lint (if installed)
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v1.61.0
+    hooks:
+      - id: golangci-lint
+        args: ['--timeout=5m']
+
+  # Security scanning with gosec (if installed)
+  - repo: https://github.com/securego/gosec
+    rev: v2.21.0
+    hooks:
+      - id: gosec
+        args: ['-exclude-dir=vendor', '-fmt=json', '-out=gosec-results.json', '-stdout', './...']
