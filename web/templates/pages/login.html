@@ -1,0 +1,23 @@
+{{define "bodyclass"}} class="login-page"{{end}}
+
+{{define "content"}}
+<div class="login-container">
+    <div class="logo">QuickQuote</div>
+    <h1>Sign In</h1>
+    {{if .Error}}
+    <div class="alert alert-error">{{.Error}}</div>
+    {{end}}
+    <form method="POST" action="/login">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <div class="form-group">
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" value="{{.Email}}" required autofocus>
+        </div>
+        <div class="form-group">
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" required>
+        </div>
+        <button type="submit" class="btn btn-block">Sign In</button>
+    </form>
+</div>
+{{end}}

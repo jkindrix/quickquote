@@ -1,0 +1,15 @@
+{{define "navbar"}}
+<nav class="navbar">
+    <div class="nav-brand">
+        <a href="/dashboard">QuickQuote</a>
+    </div>
+    <div class="nav-links">
+        <a href="/dashboard">Dashboard</a>
+        <a href="/calls">Calls</a>
+    </div>
+    <div class="nav-user">
+        <span>{{.User.Email}}</span>
+        <a href="/logout" class="btn btn-sm btn-outline">Logout</a>
+    </div>
+</nav>
+{{end}}

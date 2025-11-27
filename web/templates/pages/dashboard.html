@@ -1,0 +1,53 @@
+{{define "content"}}
+{{template "navbar" .}}
+<main class="container">
+    <div class="dashboard-header">
+        <h1>Dashboard</h1>
+        <p>Welcome back! You have <strong>{{.TotalCalls}}</strong> total calls.</p>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <h3>Total Calls</h3>
+            <p class="stat-number">{{.TotalCalls}}</p>
+        </div>
+        <div class="stat-card">
+            <h3>Pending Quotes</h3>
+            <p class="stat-number">{{.PendingQuotes}}</p>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h2>Recent Calls</h2>
+            <a href="/calls" class="btn btn-secondary">View All</a>
+        </div>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Caller</th>
+                    <th>Phone</th>
+                    <th>Status</th>
+                    <th>Date</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Calls}}
+                <tr>
+                    <td>{{if .CallerName}}{{.CallerName}}{{else}}Unknown{{end}}</td>
+                    <td>{{.PhoneNumber}}</td>
+                    <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
+                    <td>{{formatTime .CreatedAt}}</td>
+                    <td><a href="/calls/{{.ID}}" class="btn btn-sm">View</a></td>
+                </tr>
+                {{else}}
+                <tr>
+                    <td colspan="5" style="text-align: center; color: #666;">No calls yet</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+</main>
+{{end}}

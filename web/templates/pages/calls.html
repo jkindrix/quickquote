@@ -1,0 +1,54 @@
+{{define "content"}}
+{{template "navbar" .}}
+<main class="container">
+    <div class="page-header">
+        <h1>Call History</h1>
+        <p>Showing {{len .Calls}} of {{.TotalCalls}} calls</p>
+    </div>
+
+    <div class="card">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Caller</th>
+                    <th>Phone</th>
+                    <th>Status</th>
+                    <th>Duration</th>
+                    <th>Quote</th>
+                    <th>Date</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Calls}}
+                <tr>
+                    <td>{{if .CallerName}}{{.CallerName}}{{else}}Unknown{{end}}</td>
+                    <td>{{.PhoneNumber}}</td>
+                    <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
+                    <td>{{if .DurationSeconds}}{{.DurationSeconds}} sec{{else}}-{{end}}</td>
+                    <td>{{if and .QuoteSummary (ne .QuoteSummary "")}}Yes{{else}}No{{end}}</td>
+                    <td>{{formatTime .CreatedAt}}</td>
+                    <td><a href="/calls/{{.ID}}" class="btn btn-sm">View</a></td>
+                </tr>
+                {{else}}
+                <tr>
+                    <td colspan="7" style="text-align: center; color: #666;">No calls yet</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+
+        {{if gt .TotalPages 1}}
+        <div class="pagination">
+            {{if gt .Page 1}}
+            <a href="/calls?page={{subtract .Page 1}}" class="btn btn-sm">Previous</a>
+            {{end}}
+            <span class="page-info">Page {{.Page}} of {{.TotalPages}}</span>
+            {{if lt .Page .TotalPages}}
+            <a href="/calls?page={{add .Page 1}}" class="btn btn-sm">Next</a>
+            {{end}}
+        </div>
+        {{end}}
+    </div>
+</main>
+{{end}}

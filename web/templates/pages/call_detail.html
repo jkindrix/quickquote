@@ -1,0 +1,88 @@
+{{define "head"}}
+<script>
+    document.addEventListener('htmx:configRequest', function(evt) {
+        evt.detail.headers['X-CSRF-Token'] = getCsrfToken();
+    });
+    function getCsrfToken() {
+        const cookies = document.cookie.split(';');
+        for (let cookie of cookies) {
+            const [name, value] = cookie.trim().split('=');
+            if (name === 'csrf_token') return value;
+        }
+        return '';
+    }
+</script>
+{{end}}
+
+{{define "content"}}
+{{template "navbar" .}}
+<main class="container">
+    <div class="page-header">
+        <a href="/calls" class="back-link">Back to Calls</a>
+        <h1>Call with {{if .Call.CallerName}}{{.Call.CallerName}}{{else}}Unknown{{end}}</h1>
+    </div>
+
+    <div class="detail-grid">
+        <div class="card">
+            <h2>Call Information</h2>
+            <div class="info-list">
+                <p><strong>Phone:</strong> {{.Call.PhoneNumber}}</p>
+                <p><strong>From:</strong> {{.Call.FromNumber}}</p>
+                <p><strong>Status:</strong> <span class="status status-{{.Call.Status}}">{{.Call.Status}}</span></p>
+                <p><strong>Duration:</strong> {{if .Call.DurationSeconds}}{{.Call.DurationSeconds}} seconds{{else}}-{{end}}</p>
+                <p><strong>Date:</strong> {{formatTime .Call.CreatedAt}}</p>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Extracted Information</h2>
+            <div class="info-list">
+                {{if .Call.ExtractedData}}
+                    {{if .Call.ExtractedData.ProjectType}}
+                    <p><strong>Project Type:</strong> {{.Call.ExtractedData.ProjectType}}</p>
+                    {{end}}
+                    {{if .Call.ExtractedData.Requirements}}
+                    <p><strong>Requirements:</strong> {{.Call.ExtractedData.Requirements}}</p>
+                    {{end}}
+                    {{if .Call.ExtractedData.Timeline}}
+                    <p><strong>Timeline:</strong> {{.Call.ExtractedData.Timeline}}</p>
+                    {{end}}
+                    {{if .Call.ExtractedData.BudgetRange}}
+                    <p><strong>Budget Range:</strong> {{.Call.ExtractedData.BudgetRange}}</p>
+                    {{end}}
+                    {{if .Call.ExtractedData.ContactPreference}}
+                    <p><strong>Contact Preference:</strong> {{.Call.ExtractedData.ContactPreference}}</p>
+                    {{end}}
+                {{else}}
+                <p>No extracted data available</p>
+                {{end}}
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Transcript</h2>
+        <div class="transcript-box">
+            <pre>{{if .Call.Transcript}}{{.Call.Transcript}}{{else}}No transcript available{{end}}</pre>
+        </div>
+    </div>
+
+    <div class="card" id="quote-section">
+        <h2>Generated Quote</h2>
+        <div class="quote-content">
+            <pre>{{if .Call.QuoteSummary}}{{.Call.QuoteSummary}}{{else}}No quote generated yet{{end}}</pre>
+        </div>
+        <form hx-post="/calls/{{.Call.ID}}/regenerate-quote"
+              hx-target="#quote-section"
+              hx-swap="outerHTML"
+              hx-indicator="#quote-loading"
+              style="margin-top: 1rem;">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <button type="submit" class="btn btn-secondary">
+                Regenerate Quote
+            </button>
+            <span id="quote-loading" class="htmx-indicator">Generating...</span>
+        </form>
+    </div>
+</main>
+{{end}}
