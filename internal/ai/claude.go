@@ -12,27 +12,38 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/jkindrix/quickquote/internal/circuitbreaker"
 	"github.com/jkindrix/quickquote/internal/config"
 	"github.com/jkindrix/quickquote/internal/domain"
 )
 
 // ClaudeClient handles communication with the Anthropic API.
 type ClaudeClient struct {
-	apiKey     string
-	model      string
-	httpClient *http.Client
-	logger     *zap.Logger
+	apiKey         string
+	model          string
+	httpClient     *http.Client
+	circuitBreaker *circuitbreaker.CircuitBreaker
+	logger         *zap.Logger
 }
 
 // NewClaudeClient creates a new Claude client.
 func NewClaudeClient(cfg *config.AnthropicConfig, logger *zap.Logger) *ClaudeClient {
+	// Configure circuit breaker for Claude API
+	cbConfig := &circuitbreaker.Config{
+		FailureThreshold:    5,                // Open after 5 consecutive failures
+		SuccessThreshold:    3,                // Close after 3 successes in half-open
+		OpenTimeout:         30 * time.Second, // Wait 30s before trying again
+		HalfOpenMaxRequests: 3,                // Allow 3 test requests in half-open
+	}
+
 	return &ClaudeClient{
 		apiKey: cfg.APIKey,
 		model:  cfg.Model,
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
-		logger: logger,
+		circuitBreaker: circuitbreaker.New("claude-api", cbConfig, logger),
+		logger:         logger,
 	}
 }
 
@@ -92,8 +103,41 @@ func (c *ClaudeClient) GenerateQuote(ctx context.Context, transcript string, ext
 	return response, nil
 }
 
+// CircuitBreakerStats returns the current circuit breaker statistics.
+func (c *ClaudeClient) CircuitBreakerStats() circuitbreaker.Stats {
+	return c.circuitBreaker.Stats()
+}
+
+// IsCircuitOpen returns true if the circuit breaker is open.
+func (c *ClaudeClient) IsCircuitOpen() bool {
+	return c.circuitBreaker.IsOpen()
+}
+
+// ResetCircuitBreaker resets the circuit breaker to closed state.
+// Use with caution - typically for administrative purposes.
+func (c *ClaudeClient) ResetCircuitBreaker() {
+	c.circuitBreaker.Reset()
+}
+
 // sendMessage sends a message to Claude and returns the response text.
 func (c *ClaudeClient) sendMessage(ctx context.Context, message string) (string, error) {
+	var result string
+
+	err := c.circuitBreaker.Execute(ctx, func(ctx context.Context) error {
+		var execErr error
+		result, execErr = c.doSendMessage(ctx, message)
+		return execErr
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	return result, nil
+}
+
+// doSendMessage performs the actual HTTP request to Claude API.
+func (c *ClaudeClient) doSendMessage(ctx context.Context, message string) (string, error) {
 	reqBody := ClaudeRequest{
 		Model:     c.model,
 		MaxTokens: 2048,

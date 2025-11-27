@@ -3,6 +3,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,14 +13,17 @@ import (
 
 // Config holds all application configuration.
 type Config struct {
-	Server    ServerConfig
-	Database  DatabaseConfig
-	Bland     BlandConfig
-	Anthropic AnthropicConfig
-	Auth      AuthConfig
-	App       AppConfig
-	Log       LogConfig
-	RateLimit RateLimitConfig
+	Server        ServerConfig
+	Database      DatabaseConfig
+	VoiceProvider VoiceProviderConfig
+	Anthropic     AnthropicConfig
+	Auth          AuthConfig
+	App           AppConfig
+	Log           LogConfig
+	RateLimit     RateLimitConfig
+
+	// Backward compatibility - deprecated, use VoiceProvider.Bland instead
+	Bland BlandConfig
 }
 
 // ServerConfig holds HTTP server settings.
@@ -50,7 +54,47 @@ func (d *DatabaseConfig) ConnectionString() string {
 	)
 }
 
-// BlandConfig holds Bland AI API settings.
+// VoiceProviderConfig holds configuration for voice AI providers.
+type VoiceProviderConfig struct {
+	// Primary provider to use (bland, vapi, retell)
+	Primary string
+
+	// Bland AI configuration
+	Bland BlandProviderConfig
+
+	// Vapi configuration
+	Vapi VapiProviderConfig
+
+	// Retell configuration
+	Retell RetellProviderConfig
+}
+
+// BlandProviderConfig holds Bland AI API settings.
+type BlandProviderConfig struct {
+	Enabled       bool
+	APIKey        string
+	InboundNumber string
+	WebhookSecret string
+	APIURL        string
+}
+
+// VapiProviderConfig holds Vapi API settings.
+type VapiProviderConfig struct {
+	Enabled       bool
+	APIKey        string
+	WebhookSecret string
+	APIURL        string
+}
+
+// RetellProviderConfig holds Retell AI API settings.
+type RetellProviderConfig struct {
+	Enabled       bool
+	APIKey        string
+	WebhookSecret string
+	APIURL        string
+}
+
+// BlandConfig holds Bland AI API settings (deprecated - for backward compatibility).
 type BlandConfig struct {
 	APIKey        string
 	InboundNumber string
@@ -108,7 +152,8 @@ func Load() (*Config, error) {
 
 	// Try to read config file (ignore if not found)
 	if err := v.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+		var configNotFoundErr viper.ConfigFileNotFoundError
+		if !errors.As(err, &configNotFoundErr) {
 			return nil, fmt.Errorf("error reading config file: %w", err)
 		}
 	}
@@ -131,6 +176,29 @@ func Load() (*Config, error) {
 			MaxIdleConnections:    v.GetInt("database.max_idle_connections"),
 			ConnectionMaxLifetime: v.GetDuration("database.connection_max_lifetime"),
 		},
+		VoiceProvider: VoiceProviderConfig{
+			Primary: v.GetString("voice_provider.primary"),
+			Bland: BlandProviderConfig{
+				Enabled:       v.GetBool("voice_provider.bland.enabled"),
+				APIKey:        v.GetString("voice_provider.bland.api_key"),
+				InboundNumber: v.GetString("voice_provider.bland.inbound_number"),
+				WebhookSecret: v.GetString("voice_provider.bland.webhook_secret"),
+				APIURL:        v.GetString("voice_provider.bland.api_url"),
+			},
+			Vapi: VapiProviderConfig{
+				Enabled:       v.GetBool("voice_provider.vapi.enabled"),
+				APIKey:        v.GetString("voice_provider.vapi.api_key"),
+				WebhookSecret: v.GetString("voice_provider.vapi.webhook_secret"),
+				APIURL:        v.GetString("voice_provider.vapi.api_url"),
+			},
+			Retell: RetellProviderConfig{
+				Enabled:       v.GetBool("voice_provider.retell.enabled"),
+				APIKey:        v.GetString("voice_provider.retell.api_key"),
+				WebhookSecret: v.GetString("voice_provider.retell.webhook_secret"),
+				APIURL:        v.GetString("voice_provider.retell.api_url"),
+			},
+		},
+		// Backward compatibility - copy from legacy or new config
 		Bland: BlandConfig{
 			APIKey:        v.GetString("bland.api_key"),
 			InboundNumber: v.GetString("bland.inbound_number"),
@@ -158,6 +226,17 @@ func Load() (*Config, error) {
 		},
 	}
 
+	// Backward compatibility: if legacy Bland config is set but new config is not,
+	// copy values to new structure
+	if cfg.Bland.APIKey != "" && cfg.VoiceProvider.Bland.APIKey == "" {
+		cfg.VoiceProvider.Primary = "bland"
+		cfg.VoiceProvider.Bland.Enabled = true
+		cfg.VoiceProvider.Bland.APIKey = cfg.Bland.APIKey
+		cfg.VoiceProvider.Bland.InboundNumber = cfg.Bland.InboundNumber
+		cfg.VoiceProvider.Bland.WebhookSecret = cfg.Bland.WebhookSecret
+		cfg.VoiceProvider.Bland.APIURL = cfg.Bland.APIURL
+	}
+
 	// Validate required fields
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -183,7 +262,16 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("database.max_idle_connections", 5)
 	v.SetDefault("database.connection_max_lifetime", "5m")
 
-	// Bland AI defaults
+	// Voice provider defaults
+	v.SetDefault("voice_provider.primary", "bland")
+	v.SetDefault("voice_provider.bland.enabled", true)
+	v.SetDefault("voice_provider.bland.api_url", "https://api.bland.ai/v1")
+	v.SetDefault("voice_provider.vapi.enabled", false)
+	v.SetDefault("voice_provider.vapi.api_url", "https://api.vapi.ai")
+	v.SetDefault("voice_provider.retell.enabled", false)
+	v.SetDefault("voice_provider.retell.api_url", "https://api.retellai.com")
+
+	// Legacy Bland AI defaults (for backward compatibility)
 	v.SetDefault("bland.api_url", "https://api.bland.ai/v1")
 
 	// Anthropic defaults
@@ -208,12 +296,26 @@ func (c *Config) Validate() error {
 	if c.Database.Password == "" {
 		missing = append(missing, "DATABASE_PASSWORD")
 	}
-	if c.Bland.APIKey == "" {
-		missing = append(missing, "BLAND_API_KEY")
+
+	// Validate at least one voice provider is configured
+	hasVoiceProvider := false
+	if c.VoiceProvider.Bland.Enabled && c.VoiceProvider.Bland.APIKey != "" {
+		hasVoiceProvider = true
 	}
-	if c.Bland.InboundNumber == "" {
-		missing = append(missing, "BLAND_INBOUND_NUMBER")
+	if c.VoiceProvider.Vapi.Enabled && c.VoiceProvider.Vapi.APIKey != "" {
+		hasVoiceProvider = true
 	}
+	if c.VoiceProvider.Retell.Enabled && c.VoiceProvider.Retell.APIKey != "" {
+		hasVoiceProvider = true
+	}
+	// Backward compatibility: check legacy Bland config
+	if c.Bland.APIKey != "" {
+		hasVoiceProvider = true
+	}
+	if !hasVoiceProvider {
+		missing = append(missing, "VOICE_PROVIDER (at least one of BLAND_API_KEY, VAPI_API_KEY, or RETELL_API_KEY)")
+	}
+
 	if c.Anthropic.APIKey == "" {
 		missing = append(missing, "ANTHROPIC_API_KEY")
 	}

@@ -10,6 +10,9 @@ import (
 	"github.com/jkindrix/quickquote/internal/domain"
 )
 
+// defaultCallerName is used when caller name is not available.
+const defaultCallerName = "Unknown"
+
 // renderLoginHTML renders the login page HTML.
 func (h *Handler) renderLoginHTML(w http.ResponseWriter, data map[string]interface{}) {
 	errorMsg := ""
@@ -20,6 +23,11 @@ func (h *Handler) renderLoginHTML(w http.ResponseWriter, data map[string]interfa
 	email := ""
 	if e, ok := data["Email"].(string); ok {
 		email = html.EscapeString(e)
+	}
+
+	csrfToken := ""
+	if t, ok := data["CSRFToken"].(string); ok {
+		csrfToken = html.EscapeString(t)
 	}
 
 	fmt.Fprintf(w, `<!DOCTYPE html>
@@ -47,10 +55,11 @@ func (h *Handler) renderLoginHTML(w http.ResponseWriter, data map[string]interfa
 </head>
 <body>
     <div class="login-container">
-        <div class="logo">📞 QuickQuote</div>
+        <div class="logo">QuickQuote</div>
         <h1>Sign In</h1>
         %s
         <form method="POST" action="/login">
+            <input type="hidden" name="csrf_token" value="%s">
             <div class="form-group">
                 <label for="email">Email</label>
                 <input type="email" id="email" name="email" value="%s" required autofocus>
@@ -63,19 +72,19 @@ func (h *Handler) renderLoginHTML(w http.ResponseWriter, data map[string]interfa
         </form>
     </div>
 </body>
-</html>`, errorMsg, email)
+</html>`, errorMsg, csrfToken, email)
 }
 
 // renderDashboardHTML renders the dashboard page HTML.
 func (h *Handler) renderDashboardHTML(w http.ResponseWriter, data map[string]interface{}) {
-	user := data["User"].(*domain.User)
-	calls := data["Calls"].([]*domain.Call)
-	totalCalls := data["TotalCalls"].(int)
+	user, _ := data["User"].(*domain.User)
+	calls, _ := data["Calls"].([]*domain.Call)
+	totalCalls, _ := data["TotalCalls"].(int)
 
 	var callRows strings.Builder
 	for _, call := range calls {
 		statusClass := getStatusClass(call.Status)
-		callerName := "Unknown"
+		callerName := defaultCallerName
 		if call.CallerName != nil {
 			callerName = *call.CallerName
 		}
@@ -90,7 +99,7 @@ func (h *Handler) renderDashboardHTML(w http.ResponseWriter, data map[string]int
 			html.EscapeString(callerName),
 			html.EscapeString(call.PhoneNumber),
 			statusClass,
-			call.Status,
+			html.EscapeString(string(call.Status)),
 			formatTime(call.CreatedAt),
 			call.ID,
 		))
@@ -151,16 +160,16 @@ func (h *Handler) renderDashboardHTML(w http.ResponseWriter, data map[string]int
 
 // renderCallsHTML renders the calls list page HTML.
 func (h *Handler) renderCallsHTML(w http.ResponseWriter, data map[string]interface{}) {
-	user := data["User"].(*domain.User)
-	calls := data["Calls"].([]*domain.Call)
-	totalCalls := data["TotalCalls"].(int)
-	page := data["Page"].(int)
-	pageSize := data["PageSize"].(int)
+	user, _ := data["User"].(*domain.User)
+	calls, _ := data["Calls"].([]*domain.Call)
+	totalCalls, _ := data["TotalCalls"].(int)
+	page, _ := data["Page"].(int)
+	pageSize, _ := data["PageSize"].(int)
 
 	var callRows strings.Builder
 	for _, call := range calls {
 		statusClass := getStatusClass(call.Status)
-		callerName := "Unknown"
+		callerName := defaultCallerName
 		if call.CallerName != nil {
 			callerName = *call.CallerName
 		}
@@ -185,7 +194,7 @@ func (h *Handler) renderCallsHTML(w http.ResponseWriter, data map[string]interfa
 			html.EscapeString(callerName),
 			html.EscapeString(call.PhoneNumber),
 			statusClass,
-			call.Status,
+			html.EscapeString(string(call.Status)),
 			duration,
 			hasQuote,
 			formatTime(call.CreatedAt),
@@ -239,8 +248,13 @@ func (h *Handler) renderCallsHTML(w http.ResponseWriter, data map[string]interfa
 
 // renderCallDetailHTML renders a single call detail page HTML.
 func (h *Handler) renderCallDetailHTML(w http.ResponseWriter, data map[string]interface{}) {
-	user := data["User"].(*domain.User)
-	call := data["Call"].(*domain.Call)
+	user, _ := data["User"].(*domain.User)
+	call, _ := data["Call"].(*domain.Call)
+
+	csrfToken := ""
+	if t, ok := data["CSRFToken"].(string); ok {
+		csrfToken = html.EscapeString(t)
+	}
 
 	callerName := "Unknown"
 	if call.CallerName != nil {
@@ -293,13 +307,27 @@ func (h *Handler) renderCallDetailHTML(w http.ResponseWriter, data map[string]in
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Call Details - QuickQuote</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script>
+        // Configure htmx to send CSRF token with all requests
+        document.addEventListener('htmx:configRequest', function(evt) {
+            evt.detail.headers['X-CSRF-Token'] = getCsrfToken();
+        });
+        function getCsrfToken() {
+            const cookies = document.cookie.split(';');
+            for (let cookie of cookies) {
+                const [name, value] = cookie.trim().split('=');
+                if (name === 'csrf_token') return value;
+            }
+            return '';
+        }
+    </script>
     %s
 </head>
 <body>
     %s
     <main class="container">
         <div class="page-header">
-            <a href="/calls" class="back-link">← Back to Calls</a>
+            <a href="/calls" class="back-link">Back to Calls</a>
             <h1>Call with %s</h1>
         </div>
 
@@ -335,14 +363,16 @@ func (h *Handler) renderCallDetailHTML(w http.ResponseWriter, data map[string]in
             <div class="quote-content">
                 <pre>%s</pre>
             </div>
-            <button hx-post="/calls/%s/regenerate-quote"
-                    hx-target="#quote-section"
-                    hx-swap="outerHTML"
-                    hx-indicator="#quote-loading"
-                    class="btn btn-secondary">
-                Regenerate Quote
-            </button>
-            <span id="quote-loading" class="htmx-indicator">Generating...</span>
+            <form hx-post="/calls/%s/regenerate-quote"
+                  hx-target="#quote-section"
+                  hx-swap="outerHTML"
+                  hx-indicator="#quote-loading">
+                <input type="hidden" name="csrf_token" value="%s">
+                <button type="submit" class="btn btn-secondary">
+                    Regenerate Quote
+                </button>
+                <span id="quote-loading" class="htmx-indicator">Generating...</span>
+            </form>
         </div>
     </main>
 </body>
@@ -353,13 +383,14 @@ func (h *Handler) renderCallDetailHTML(w http.ResponseWriter, data map[string]in
 		html.EscapeString(call.PhoneNumber),
 		html.EscapeString(call.FromNumber),
 		statusClass,
-		call.Status,
+		html.EscapeString(string(call.Status)),
 		duration,
 		formatTime(call.CreatedAt),
 		extractedData.String(),
 		html.EscapeString(transcript),
 		html.EscapeString(quote),
 		call.ID,
+		csrfToken,
 	)
 }
 
@@ -382,16 +413,6 @@ func getStatusClass(status domain.CallStatus) string {
 
 func formatTime(t time.Time) string {
 	return t.Format("Jan 2, 2006 3:04 PM")
-}
-
-func countPendingQuotes(calls []*domain.Call) int {
-	count := 0
-	for _, call := range calls {
-		if call.Status == domain.CallStatusCompleted && (call.QuoteSummary == nil || *call.QuoteSummary == "") {
-			count++
-		}
-	}
-	return count
 }
 
 func buildPagination(page, totalPages int) string {

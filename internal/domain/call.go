@@ -22,9 +22,10 @@ const (
 // Call represents a phone call record.
 type Call struct {
 	ID              uuid.UUID         `json:"id"`
-	BlandCallID     string            `json:"bland_call_id"`
-	PhoneNumber     string            `json:"phone_number"`
-	FromNumber      string            `json:"from_number"`
+	ProviderCallID  string            `json:"provider_call_id"`  // ID from voice provider (Bland, Vapi, Retell, etc.)
+	Provider        string            `json:"provider"`          // Provider type: "bland", "vapi", "retell", etc.
+	PhoneNumber     string            `json:"phone_number"`      // Number that received the call (to)
+	FromNumber      string            `json:"from_number"`       // Caller's number
 	CallerName      *string           `json:"caller_name,omitempty"`
 	Status          CallStatus        `json:"status"`
 	StartedAt       *time.Time        `json:"started_at,omitempty"`
@@ -58,16 +59,17 @@ type ExtractedData struct {
 }
 
 // NewCall creates a new Call with default values.
-func NewCall(blandCallID, phoneNumber, fromNumber string) *Call {
+func NewCall(providerCallID, provider, phoneNumber, fromNumber string) *Call {
 	now := time.Now().UTC()
 	return &Call{
-		ID:          uuid.New(),
-		BlandCallID: blandCallID,
-		PhoneNumber: phoneNumber,
-		FromNumber:  fromNumber,
-		Status:      CallStatusPending,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:             uuid.New(),
+		ProviderCallID: providerCallID,
+		Provider:       provider,
+		PhoneNumber:    phoneNumber,
+		FromNumber:     fromNumber,
+		Status:         CallStatusPending,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 }
 

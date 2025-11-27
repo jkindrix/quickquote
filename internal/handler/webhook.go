@@ -2,67 +2,79 @@ package handler
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 
 	"go.uber.org/zap"
 
-	"github.com/jkindrix/quickquote/internal/webhook"
+	"github.com/jkindrix/quickquote/internal/voiceprovider"
 )
 
-// HandleBlandWebhook processes incoming webhooks from Bland AI.
-func (h *Handler) HandleBlandWebhook(w http.ResponseWriter, r *http.Request) {
-	// Read body
-	body, err := io.ReadAll(r.Body)
+// HandleVoiceWebhook processes incoming webhooks from any voice provider.
+// It uses the provider registry to route webhooks to the appropriate adapter.
+func (h *Handler) HandleVoiceWebhook(w http.ResponseWriter, r *http.Request) {
+	if h.providerRegistry == nil {
+		h.logger.Error("voice provider registry not configured")
+		http.Error(w, "Voice provider not configured", http.StatusInternalServerError)
+		return
+	}
+
+	// Determine provider from URL path
+	path := r.URL.Path
+	provider, err := h.providerRegistry.GetByWebhookPath(path)
 	if err != nil {
-		h.logger.Error("failed to read webhook body", zap.Error(err))
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
-
-	h.logger.Debug("received bland webhook",
-		zap.String("content_type", r.Header.Get("Content-Type")),
-		zap.Int("body_length", len(body)),
-	)
-
-	// Parse payload
-	var payload webhook.BlandWebhookPayload
-	if err := json.Unmarshal(body, &payload); err != nil {
-		h.logger.Error("failed to parse webhook payload",
+		h.logger.Warn("unknown webhook path",
+			zap.String("path", path),
 			zap.Error(err),
-			zap.String("body", string(body)),
 		)
-		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		http.Error(w, "Unknown webhook provider", http.StatusNotFound)
 		return
 	}
 
-	// Validate required fields
-	if payload.CallID == "" {
-		h.logger.Warn("webhook missing call_id")
-		http.Error(w, "Missing call_id", http.StatusBadRequest)
-		return
-	}
-
-	h.logger.Info("processing bland webhook",
-		zap.String("call_id", payload.CallID),
-		zap.String("status", payload.Status),
-		zap.String("phone_number", payload.GetPhoneNumber()),
+	h.logger.Debug("received voice webhook",
+		zap.String("provider", string(provider.GetName())),
+		zap.String("content_type", r.Header.Get("Content-Type")),
 	)
 
-	// Process the webhook
-	call, err := h.callService.ProcessWebhook(r.Context(), &payload)
+	// Validate webhook authenticity
+	if !provider.ValidateWebhook(r) {
+		h.logger.Warn("webhook validation failed",
+			zap.String("provider", string(provider.GetName())),
+		)
+		http.Error(w, "Invalid webhook signature", http.StatusUnauthorized)
+		return
+	}
+
+	// Parse webhook into normalized CallEvent
+	event, err := provider.ParseWebhook(r)
+	if err != nil {
+		h.logger.Error("failed to parse webhook",
+			zap.String("provider", string(provider.GetName())),
+			zap.Error(err),
+		)
+		http.Error(w, "Invalid webhook payload", http.StatusBadRequest)
+		return
+	}
+
+	h.logger.Info("processing voice webhook",
+		zap.String("provider", string(event.Provider)),
+		zap.String("provider_call_id", event.ProviderCallID),
+		zap.String("status", string(event.Status)),
+	)
+
+	// Process the normalized event
+	call, err := h.callService.ProcessCallEvent(r.Context(), event)
 	if err != nil {
 		h.logger.Error("failed to process webhook",
 			zap.Error(err),
-			zap.String("call_id", payload.CallID),
+			zap.String("provider_call_id", event.ProviderCallID),
 		)
 		http.Error(w, "Failed to process webhook", http.StatusInternalServerError)
 		return
 	}
 
 	h.logger.Info("webhook processed successfully",
-		zap.String("call_id", payload.CallID),
+		zap.String("provider", string(event.Provider)),
+		zap.String("provider_call_id", event.ProviderCallID),
 		zap.String("internal_id", call.ID.String()),
 		zap.String("status", string(call.Status)),
 	)
@@ -70,8 +82,41 @@ func (h *Handler) HandleBlandWebhook(w http.ResponseWriter, r *http.Request) {
 	// Respond with success
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"call_id": call.ID.String(),
-	})
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"call_id":  call.ID.String(),
+		"provider": string(event.Provider),
+	}); err != nil {
+		h.logger.Debug("failed to write webhook response", zap.Error(err))
+	}
 }
+
+// HandleBlandWebhook is a convenience endpoint that routes directly to Bland.
+// This maintains backward compatibility with existing Bland webhook configurations.
+func (h *Handler) HandleBlandWebhook(w http.ResponseWriter, r *http.Request) {
+	// Rewrite path to use the unified handler
+	r.URL.Path = "/webhook/bland"
+	h.HandleVoiceWebhook(w, r)
+}
+
+// RegisterWebhookRoutes registers all webhook routes for voice providers.
+func (h *Handler) RegisterWebhookRoutes(mux interface {
+	Post(pattern string, handlerFn http.HandlerFunc)
+}) {
+	if h.providerRegistry == nil {
+		h.logger.Warn("no voice provider registry configured, skipping webhook routes")
+		return
+	}
+
+	// Register a route for each provider's webhook path
+	for _, path := range h.providerRegistry.GetWebhookPaths() {
+		h.logger.Info("registering webhook route", zap.String("path", path))
+		mux.Post(path, h.HandleVoiceWebhook)
+	}
+}
+
+// SetProviderRegistry sets the voice provider registry.
+func (h *Handler) SetProviderRegistry(registry *voiceprovider.Registry) {
+	h.providerRegistry = registry
+}
+

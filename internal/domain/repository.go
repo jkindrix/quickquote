@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -14,8 +15,8 @@ type CallRepository interface {
 	// GetByID retrieves a call by its internal ID.
 	GetByID(ctx context.Context, id uuid.UUID) (*Call, error)
 
-	// GetByBlandCallID retrieves a call by the Bland AI call ID.
-	GetByBlandCallID(ctx context.Context, blandCallID string) (*Call, error)
+	// GetByProviderCallID retrieves a call by the voice provider's call ID.
+	GetByProviderCallID(ctx context.Context, providerCallID string) (*Call, error)
 
 	// Update updates an existing call record.
 	Update(ctx context.Context, call *Call) error
@@ -53,6 +54,9 @@ type SessionRepository interface {
 	// GetByToken retrieves a session by its token.
 	GetByToken(ctx context.Context, token string) (*Session, error)
 
+	// Update updates an existing session (for token rotation, activity tracking).
+	Update(ctx context.Context, session *Session) error
+
 	// Delete removes a session.
 	Delete(ctx context.Context, token string) error
 
@@ -61,4 +65,30 @@ type SessionRepository interface {
 
 	// DeleteByUserID removes all sessions for a user.
 	DeleteByUserID(ctx context.Context, userID uuid.UUID) error
+}
+
+// QuoteJobRepository defines the interface for quote job persistence.
+type QuoteJobRepository interface {
+	// Create inserts a new quote job.
+	Create(ctx context.Context, job *QuoteJob) error
+
+	// GetByID retrieves a job by ID.
+	GetByID(ctx context.Context, id uuid.UUID) (*QuoteJob, error)
+
+	// GetByCallID retrieves the job for a specific call.
+	GetByCallID(ctx context.Context, callID uuid.UUID) (*QuoteJob, error)
+
+	// Update updates an existing job.
+	Update(ctx context.Context, job *QuoteJob) error
+
+	// GetPendingJobs retrieves jobs ready to be processed.
+	// Returns jobs where status='pending' and scheduled_at <= now.
+	GetPendingJobs(ctx context.Context, limit int) ([]*QuoteJob, error)
+
+	// GetProcessingJobs retrieves jobs currently being processed.
+	// Useful for detecting stuck jobs on startup.
+	GetProcessingJobs(ctx context.Context, olderThan time.Duration) ([]*QuoteJob, error)
+
+	// CountByStatus returns counts of jobs by status.
+	CountByStatus(ctx context.Context) (map[QuoteJobStatus]int, error)
 }

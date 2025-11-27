@@ -39,17 +39,18 @@ func (r *CallRepository) Create(ctx context.Context, call *domain.Call) error {
 
 	query := `
 		INSERT INTO calls (
-			id, bland_call_id, phone_number, from_number, caller_name,
+			id, provider_call_id, provider, phone_number, from_number, caller_name,
 			status, started_at, ended_at, duration_seconds, transcript,
 			transcript_json, recording_url, quote_summary, extracted_data,
 			error_message, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
 		)`
 
 	_, err = r.pool.Exec(ctx, query,
 		call.ID,
-		call.BlandCallID,
+		call.ProviderCallID,
+		call.Provider,
 		call.PhoneNumber,
 		call.FromNumber,
 		call.CallerName,
@@ -77,7 +78,7 @@ func (r *CallRepository) Create(ctx context.Context, call *domain.Call) error {
 func (r *CallRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Call, error) {
 	query := `
 		SELECT
-			id, bland_call_id, phone_number, from_number, caller_name,
+			id, provider_call_id, provider, phone_number, from_number, caller_name,
 			status, started_at, ended_at, duration_seconds, transcript,
 			transcript_json, recording_url, quote_summary, extracted_data,
 			error_message, created_at, updated_at
@@ -87,18 +88,18 @@ func (r *CallRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Cal
 	return r.scanCall(ctx, query, id)
 }
 
-// GetByBlandCallID retrieves a call by the Bland AI call ID.
-func (r *CallRepository) GetByBlandCallID(ctx context.Context, blandCallID string) (*domain.Call, error) {
+// GetByProviderCallID retrieves a call by the voice provider's call ID.
+func (r *CallRepository) GetByProviderCallID(ctx context.Context, providerCallID string) (*domain.Call, error) {
 	query := `
 		SELECT
-			id, bland_call_id, phone_number, from_number, caller_name,
+			id, provider_call_id, provider, phone_number, from_number, caller_name,
 			status, started_at, ended_at, duration_seconds, transcript,
 			transcript_json, recording_url, quote_summary, extracted_data,
 			error_message, created_at, updated_at
 		FROM calls
-		WHERE bland_call_id = $1`
+		WHERE provider_call_id = $1`
 
-	return r.scanCall(ctx, query, blandCallID)
+	return r.scanCall(ctx, query, providerCallID)
 }
 
 // Update updates an existing call record.
@@ -117,24 +118,26 @@ func (r *CallRepository) Update(ctx context.Context, call *domain.Call) error {
 
 	query := `
 		UPDATE calls SET
-			phone_number = $2,
-			from_number = $3,
-			caller_name = $4,
-			status = $5,
-			started_at = $6,
-			ended_at = $7,
-			duration_seconds = $8,
-			transcript = $9,
-			transcript_json = $10,
-			recording_url = $11,
-			quote_summary = $12,
-			extracted_data = $13,
-			error_message = $14,
-			updated_at = $15
+			provider = $2,
+			phone_number = $3,
+			from_number = $4,
+			caller_name = $5,
+			status = $6,
+			started_at = $7,
+			ended_at = $8,
+			duration_seconds = $9,
+			transcript = $10,
+			transcript_json = $11,
+			recording_url = $12,
+			quote_summary = $13,
+			extracted_data = $14,
+			error_message = $15,
+			updated_at = $16
 		WHERE id = $1`
 
 	result, err := r.pool.Exec(ctx, query,
 		call.ID,
+		call.Provider,
 		call.PhoneNumber,
 		call.FromNumber,
 		call.CallerName,
@@ -165,7 +168,7 @@ func (r *CallRepository) Update(ctx context.Context, call *domain.Call) error {
 func (r *CallRepository) List(ctx context.Context, limit, offset int) ([]*domain.Call, error) {
 	query := `
 		SELECT
-			id, bland_call_id, phone_number, from_number, caller_name,
+			id, provider_call_id, provider, phone_number, from_number, caller_name,
 			status, started_at, ended_at, duration_seconds, transcript,
 			transcript_json, recording_url, quote_summary, extracted_data,
 			error_message, created_at, updated_at
@@ -190,7 +193,7 @@ func (r *CallRepository) Count(ctx context.Context) (int, error) {
 func (r *CallRepository) ListByStatus(ctx context.Context, status domain.CallStatus, limit, offset int) ([]*domain.Call, error) {
 	query := `
 		SELECT
-			id, bland_call_id, phone_number, from_number, caller_name,
+			id, provider_call_id, provider, phone_number, from_number, caller_name,
 			status, started_at, ended_at, duration_seconds, transcript,
 			transcript_json, recording_url, quote_summary, extracted_data,
 			error_message, created_at, updated_at
@@ -209,7 +212,8 @@ func (r *CallRepository) scanCall(ctx context.Context, query string, args ...int
 
 	err := r.pool.QueryRow(ctx, query, args...).Scan(
 		&call.ID,
-		&call.BlandCallID,
+		&call.ProviderCallID,
+		&call.Provider,
 		&call.PhoneNumber,
 		&call.FromNumber,
 		&call.CallerName,
@@ -264,7 +268,8 @@ func (r *CallRepository) scanCalls(ctx context.Context, query string, args ...in
 
 		err := rows.Scan(
 			&call.ID,
-			&call.BlandCallID,
+			&call.ProviderCallID,
+			&call.Provider,
 			&call.PhoneNumber,
 			&call.FromNumber,
 			&call.CallerName,

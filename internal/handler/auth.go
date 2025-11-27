@@ -2,7 +2,11 @@ package handler
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -35,7 +39,7 @@ func (h *Handler) AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		user, err := h.authService.ValidateSession(r.Context(), cookie.Value)
+		result, err := h.authService.ValidateAndRefreshSession(r.Context(), cookie.Value)
 		if err != nil {
 			h.logger.Debug("invalid session", zap.Error(err))
 			// Clear invalid cookie
@@ -50,9 +54,50 @@ func (h *Handler) AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), userContextKey, user)
+		// If token was rotated, set the new cookie
+		if result.NewToken != "" {
+			http.SetCookie(w, &http.Cookie{
+				Name:     "session_token",
+				Value:    result.NewToken,
+				Path:     "/",
+				MaxAge:   86400 * 7, // 7 days
+				HttpOnly: true,
+				Secure:   r.TLS != nil,
+				SameSite: http.SameSiteLaxMode,
+			})
+			h.logger.Debug("session token rotated for user")
+		}
+
+		ctx := context.WithValue(r.Context(), userContextKey, result.User)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// getClientIP extracts the client IP from a request.
+func getClientIP(r *http.Request) string {
+	// Check X-Forwarded-For header (set by proxies)
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// Take the first IP in the list
+		for i := 0; i < len(xff); i++ {
+			if xff[i] == ',' {
+				return strings.TrimSpace(xff[:i])
+			}
+		}
+		return strings.TrimSpace(xff)
+	}
+
+	// Check X-Real-IP header
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+
+	// Fall back to RemoteAddr - use net.SplitHostPort for proper IPv4/IPv6 handling
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		// If SplitHostPort fails, return RemoteAddr as-is (may not have port)
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // HandleLoginPage renders the login page.
@@ -66,8 +111,12 @@ func (h *Handler) HandleLoginPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.renderTemplate(w, "login", map[string]interface{}{
-		"Title": "Login",
+	// Get CSRF token
+	csrfToken := h.getCSRFToken(r)
+
+	h.renderTemplate(w, r, "login", map[string]interface{}{
+		"Title":     "Login",
+		"CSRFToken": csrfToken,
 	})
 }
 
@@ -75,26 +124,50 @@ func (h *Handler) HandleLoginPage(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		h.logger.Error("failed to parse form", zap.Error(err))
-		h.renderTemplate(w, "login", map[string]interface{}{
-			"Title": "Login",
-			"Error": "Invalid request",
+		h.renderTemplate(w, r, "login", map[string]interface{}{
+			"Title":     "Login",
+			"Error":     "Invalid request",
+			"CSRFToken": h.getCSRFToken(r),
 		})
 		return
 	}
 
 	email := r.FormValue("email")
 	password := r.FormValue("password")
+	ip := getClientIP(r)
 
-	if email == "" || password == "" {
-		h.renderTemplate(w, "login", map[string]interface{}{
-			"Title": "Login",
-			"Error": "Email and password are required",
-			"Email": email,
+	// Check login rate limit
+	if h.loginRateLimiter != nil && !h.loginRateLimiter.Check(ip, email) {
+		h.logger.Warn("login rate limited",
+			zap.String("email", email),
+			zap.String("ip", ip),
+		)
+		h.renderTemplate(w, r, "login", map[string]interface{}{
+			"Title":     "Login",
+			"Error":     "Too many login attempts. Please try again in 30 minutes.",
+			"Email":     email,
+			"CSRFToken": h.getCSRFToken(r),
 		})
 		return
 	}
 
-	session, err := h.authService.Login(r.Context(), email, password)
+	if email == "" || password == "" {
+		h.renderTemplate(w, r, "login", map[string]interface{}{
+			"Title":     "Login",
+			"Error":     "Email and password are required",
+			"Email":     email,
+			"CSRFToken": h.getCSRFToken(r),
+		})
+		return
+	}
+
+	// Create login context with IP and user agent
+	loginCtx := &service.LoginContext{
+		IPAddress: ip,
+		UserAgent: r.UserAgent(),
+	}
+
+	session, err := h.authService.LoginWithContext(r.Context(), email, password, loginCtx)
 	if err != nil {
 		h.logger.Warn("login failed",
 			zap.String("email", email),
@@ -102,16 +175,32 @@ func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		)
 
 		errorMsg := "Invalid email or password"
-		if _, ok := err.(*service.AuthError); !ok {
+		var authErr *service.AuthError
+		if !errors.As(err, &authErr) {
 			errorMsg = "An error occurred. Please try again."
 		}
 
-		h.renderTemplate(w, "login", map[string]interface{}{
-			"Title": "Login",
-			"Error": errorMsg,
-			"Email": email,
+		// Add remaining attempts info
+		remaining := 5
+		if h.loginRateLimiter != nil {
+			remaining = h.loginRateLimiter.RemainingAttempts(ip, email)
+		}
+		if remaining <= 2 && remaining > 0 {
+			errorMsg = fmt.Sprintf("%s %d attempts remaining.", errorMsg, remaining)
+		}
+
+		h.renderTemplate(w, r, "login", map[string]interface{}{
+			"Title":     "Login",
+			"Error":     errorMsg,
+			"Email":     email,
+			"CSRFToken": h.getCSRFToken(r),
 		})
 		return
+	}
+
+	// Record successful login to reset rate limit
+	if h.loginRateLimiter != nil {
+		h.loginRateLimiter.RecordSuccess(ip, email)
 	}
 
 	// Set session cookie
@@ -127,6 +216,14 @@ func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	h.logger.Info("user logged in successfully", zap.String("email", email))
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+}
+
+// getCSRFToken returns the CSRF token for the current request.
+func (h *Handler) getCSRFToken(r *http.Request) string {
+	if h.csrfProtection != nil {
+		return h.csrfProtection.GetToken(r)
+	}
+	return ""
 }
 
 // HandleLogout logs the user out.
@@ -152,11 +249,24 @@ func (h *Handler) HandleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 // renderTemplate is a helper to render HTML templates.
-func (h *Handler) renderTemplate(w http.ResponseWriter, name string, data map[string]interface{}) {
-	// TODO: Implement with templ templates
-	// For now, use a simple HTML response
+func (h *Handler) renderTemplate(w http.ResponseWriter, r *http.Request, name string, data map[string]interface{}) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
+	// Add CSRF token to all templates if not already present
+	if _, ok := data["CSRFToken"]; !ok {
+		data["CSRFToken"] = h.getCSRFToken(r)
+	}
+
+	// Use template engine if available
+	if h.templateEngine != nil && h.templateEngine.HasTemplate(name) {
+		if err := h.templateEngine.Render(w, name, data); err != nil {
+			h.logger.Error("failed to render template", zap.String("name", name), zap.Error(err))
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// Fallback to inline templates
 	switch name {
 	case "login":
 		h.renderLoginHTML(w, data)

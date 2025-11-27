@@ -14,8 +14,9 @@ import (
 
 // DB wraps the pgx connection pool with additional functionality.
 type DB struct {
-	Pool   *pgxpool.Pool
-	logger *zap.Logger
+	Pool      *pgxpool.Pool
+	TxManager *TxManager
+	logger    *zap.Logger
 }
 
 // New creates a new database connection pool.
@@ -51,10 +52,13 @@ func New(ctx context.Context, cfg *config.DatabaseConfig, logger *zap.Logger) (*
 		zap.Int("max_connections", cfg.MaxConnections),
 	)
 
-	return &DB{
+	db := &DB{
 		Pool:   pool,
 		logger: logger,
-	}, nil
+	}
+	db.TxManager = NewTxManager(pool, logger)
+
+	return db, nil
 }
 
 // Close closes the database connection pool.

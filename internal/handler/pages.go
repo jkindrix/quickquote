@@ -2,6 +2,7 @@ package handler
 
 import (
 	"fmt"
+	"html"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -41,11 +42,12 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.renderTemplate(w, "dashboard", map[string]interface{}{
-		"Title":      "Dashboard",
-		"User":       user,
-		"Calls":      calls,
-		"TotalCalls": total,
+	h.renderTemplate(w, r, "dashboard", map[string]interface{}{
+		"Title":         "Dashboard",
+		"User":          user,
+		"Calls":         calls,
+		"TotalCalls":    total,
+		"PendingQuotes": countPendingQuotes(calls),
 	})
 }
 
@@ -59,7 +61,9 @@ func (h *Handler) HandleCallsList(w http.ResponseWriter, r *http.Request) {
 
 	page := 1
 	if p := r.URL.Query().Get("page"); p != "" {
-		fmt.Sscanf(p, "%d", &page)
+		if _, err := fmt.Sscanf(p, "%d", &page); err != nil || page < 1 {
+			page = 1 // Default to page 1 on invalid input
+		}
 	}
 
 	calls, total, err := h.callService.ListCalls(r.Context(), page, 20)
@@ -69,13 +73,17 @@ func (h *Handler) HandleCallsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.renderTemplate(w, "calls", map[string]interface{}{
+	pageSize := 20
+	totalPages := (total + pageSize - 1) / pageSize
+
+	h.renderTemplate(w, r, "calls", map[string]interface{}{
 		"Title":      "Calls",
 		"User":       user,
 		"Calls":      calls,
 		"TotalCalls": total,
 		"Page":       page,
-		"PageSize":   20,
+		"PageSize":   pageSize,
+		"TotalPages": totalPages,
 	})
 }
 
@@ -101,7 +109,7 @@ func (h *Handler) HandleCallDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.renderTemplate(w, "call_detail", map[string]interface{}{
+	h.renderTemplate(w, r, "call_detail", map[string]interface{}{
 		"Title": "Call Details",
 		"User":  user,
 		"Call":  call,
@@ -148,16 +156,43 @@ func (h *Handler) renderQuoteSection(w http.ResponseWriter, call *domain.Call) {
 		quote = *call.QuoteSummary
 	}
 
+	csrfToken := ""
+	if h.csrfProtection != nil {
+		var err error
+		csrfToken, err = h.csrfProtection.GenerateToken()
+		if err != nil {
+			h.logger.Error("failed to generate CSRF token", zap.Error(err))
+		}
+	}
+
 	fmt.Fprintf(w, `
-		<div id="quote-section" class="quote-section">
-			<h3>Generated Quote</h3>
-			<div class="quote-content">%s</div>
-			<button hx-post="/calls/%s/regenerate-quote"
-					hx-target="#quote-section"
-					hx-swap="outerHTML"
-					class="btn btn-secondary">
-				Regenerate Quote
-			</button>
+		<div class="card" id="quote-section">
+			<h2>Generated Quote</h2>
+			<div class="quote-content">
+				<pre>%s</pre>
+			</div>
+			<form hx-post="/calls/%s/regenerate-quote"
+				  hx-target="#quote-section"
+				  hx-swap="outerHTML"
+				  hx-indicator="#quote-loading"
+				  style="margin-top: 1rem;">
+				<input type="hidden" name="csrf_token" value="%s">
+				<button type="submit" class="btn btn-secondary">
+					Regenerate Quote
+				</button>
+				<span id="quote-loading" class="htmx-indicator">Generating...</span>
+			</form>
 		</div>
-	`, quote, call.ID)
+	`, html.EscapeString(quote), call.ID, html.EscapeString(csrfToken))
+}
+
+// countPendingQuotes counts calls that are completed but don't have quotes.
+func countPendingQuotes(calls []*domain.Call) int {
+	count := 0
+	for _, call := range calls {
+		if call.Status == domain.CallStatusCompleted && (call.QuoteSummary == nil || *call.QuoteSummary == "") {
+			count++
+		}
+	}
+	return count
 }

@@ -134,8 +134,8 @@ func NewSessionRepository(pool *pgxpool.Pool) *SessionRepository {
 // Create inserts a new session.
 func (r *SessionRepository) Create(ctx context.Context, session *domain.Session) error {
 	query := `
-		INSERT INTO sessions (id, user_id, token, expires_at, created_at)
-		VALUES ($1, $2, $3, $4, $5)`
+		INSERT INTO sessions (id, user_id, token, expires_at, created_at, last_active_at, ip_address, user_agent, previous_token, rotated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 
 	_, err := r.pool.Exec(ctx, query,
 		session.ID,
@@ -143,6 +143,11 @@ func (r *SessionRepository) Create(ctx context.Context, session *domain.Session)
 		session.Token,
 		session.ExpiresAt,
 		session.CreatedAt,
+		session.LastActiveAt,
+		session.IPAddress,
+		session.UserAgent,
+		session.PreviousToken,
+		session.RotatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert session: %w", err)
@@ -151,12 +156,21 @@ func (r *SessionRepository) Create(ctx context.Context, session *domain.Session)
 	return nil
 }
 
-// GetByToken retrieves a session by its token.
+// GetByToken retrieves a session by its token (current or previous within grace period).
 func (r *SessionRepository) GetByToken(ctx context.Context, token string) (*domain.Session, error) {
+	// Query for current token OR previous token within grace period
 	query := `
-		SELECT id, user_id, token, expires_at, created_at
+		SELECT id, user_id, token, expires_at, created_at,
+		       COALESCE(last_active_at, created_at) as last_active_at,
+		       COALESCE(ip_address, '') as ip_address,
+		       COALESCE(user_agent, '') as user_agent,
+		       previous_token,
+		       rotated_at
 		FROM sessions
-		WHERE token = $1 AND expires_at > NOW()`
+		WHERE expires_at > NOW() AND (
+			token = $1 OR
+			(previous_token = $1 AND rotated_at > NOW() - INTERVAL '30 seconds')
+		)`
 
 	session := &domain.Session{}
 	err := r.pool.QueryRow(ctx, query, token).Scan(
@@ -165,6 +179,11 @@ func (r *SessionRepository) GetByToken(ctx context.Context, token string) (*doma
 		&session.Token,
 		&session.ExpiresAt,
 		&session.CreatedAt,
+		&session.LastActiveAt,
+		&session.IPAddress,
+		&session.UserAgent,
+		&session.PreviousToken,
+		&session.RotatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -174,6 +193,40 @@ func (r *SessionRepository) GetByToken(ctx context.Context, token string) (*doma
 	}
 
 	return session, nil
+}
+
+// Update updates an existing session.
+func (r *SessionRepository) Update(ctx context.Context, session *domain.Session) error {
+	query := `
+		UPDATE sessions SET
+			token = $2,
+			expires_at = $3,
+			last_active_at = $4,
+			ip_address = $5,
+			user_agent = $6,
+			previous_token = $7,
+			rotated_at = $8
+		WHERE id = $1`
+
+	result, err := r.pool.Exec(ctx, query,
+		session.ID,
+		session.Token,
+		session.ExpiresAt,
+		session.LastActiveAt,
+		session.IPAddress,
+		session.UserAgent,
+		session.PreviousToken,
+		session.RotatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update session: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+
+	return nil
 }
 
 // Delete removes a session.
@@ -207,6 +260,38 @@ func (r *SessionRepository) DeleteByUserID(ctx context.Context, userID uuid.UUID
 	_, err := r.pool.Exec(ctx, query, userID)
 	if err != nil {
 		return fmt.Errorf("failed to delete user sessions: %w", err)
+	}
+
+	return nil
+}
+
+// ClearExpiredPreviousTokens clears previous_token for sessions past the grace period.
+func (r *SessionRepository) ClearExpiredPreviousTokens(ctx context.Context) error {
+	query := `
+		UPDATE sessions SET
+			previous_token = NULL,
+			rotated_at = NULL
+		WHERE previous_token IS NOT NULL AND rotated_at < NOW() - INTERVAL '30 seconds'`
+
+	_, err := r.pool.Exec(ctx, query)
+	if err != nil {
+		return fmt.Errorf("failed to clear expired previous tokens: %w", err)
+	}
+
+	return nil
+}
+
+// InvalidatePreviousToken explicitly invalidates a previous token for a session.
+func (r *SessionRepository) InvalidatePreviousToken(ctx context.Context, sessionID uuid.UUID) error {
+	query := `
+		UPDATE sessions SET
+			previous_token = NULL,
+			rotated_at = NULL
+		WHERE id = $1`
+
+	_, err := r.pool.Exec(ctx, query, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to invalidate previous token: %w", err)
 	}
 
 	return nil

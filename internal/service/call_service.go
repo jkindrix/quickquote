@@ -12,14 +12,15 @@ import (
 
 	"github.com/jkindrix/quickquote/internal/domain"
 	"github.com/jkindrix/quickquote/internal/repository"
-	"github.com/jkindrix/quickquote/internal/webhook"
+	"github.com/jkindrix/quickquote/internal/voiceprovider"
 )
 
 // CallService handles call-related business logic.
 type CallService struct {
-	callRepo   domain.CallRepository
-	quoteGen   QuoteGenerator
-	logger     *zap.Logger
+	callRepo     domain.CallRepository
+	quoteGen     QuoteGenerator
+	jobProcessor *QuoteJobProcessor
+	logger       *zap.Logger
 }
 
 // QuoteGenerator defines the interface for generating quotes from transcripts.
@@ -31,24 +32,28 @@ type QuoteGenerator interface {
 func NewCallService(
 	callRepo domain.CallRepository,
 	quoteGen QuoteGenerator,
+	jobProcessor *QuoteJobProcessor,
 	logger *zap.Logger,
 ) *CallService {
 	return &CallService{
-		callRepo:   callRepo,
-		quoteGen:   quoteGen,
-		logger:     logger,
+		callRepo:     callRepo,
+		quoteGen:     quoteGen,
+		jobProcessor: jobProcessor,
+		logger:       logger,
 	}
 }
 
-// ProcessWebhook processes an incoming Bland AI webhook payload.
-func (s *CallService) ProcessWebhook(ctx context.Context, payload *webhook.BlandWebhookPayload) (*domain.Call, error) {
-	s.logger.Info("processing webhook",
-		zap.String("call_id", payload.CallID),
-		zap.String("status", payload.Status),
+// ProcessCallEvent processes a normalized call event from any voice provider.
+// This is the provider-agnostic entry point for call processing.
+func (s *CallService) ProcessCallEvent(ctx context.Context, event *voiceprovider.CallEvent) (*domain.Call, error) {
+	s.logger.Info("processing call event",
+		zap.String("provider", string(event.Provider)),
+		zap.String("provider_call_id", event.ProviderCallID),
+		zap.String("status", string(event.Status)),
 	)
 
 	// Check if call already exists
-	call, err := s.callRepo.GetByBlandCallID(ctx, payload.CallID)
+	call, err := s.callRepo.GetByProviderCallID(ctx, event.ProviderCallID)
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return nil, fmt.Errorf("failed to check existing call: %w", err)
 	}
@@ -56,9 +61,10 @@ func (s *CallService) ProcessWebhook(ctx context.Context, payload *webhook.Bland
 	if call == nil {
 		// Create new call record
 		call = domain.NewCall(
-			payload.CallID,
-			payload.GetPhoneNumber(),
-			payload.GetFromNumber(),
+			event.ProviderCallID,
+			string(event.Provider),
+			event.ToNumber,
+			event.FromNumber,
 		)
 		if err := s.callRepo.Create(ctx, call); err != nil {
 			return nil, fmt.Errorf("failed to create call: %w", err)
@@ -66,8 +72,8 @@ func (s *CallService) ProcessWebhook(ctx context.Context, payload *webhook.Bland
 		s.logger.Info("created new call record", zap.String("id", call.ID.String()))
 	}
 
-	// Update call with webhook data
-	s.updateCallFromPayload(call, payload)
+	// Update call with event data
+	s.updateCallFromEvent(call, event)
 
 	if err := s.callRepo.Update(ctx, call); err != nil {
 		return nil, fmt.Errorf("failed to update call: %w", err)
@@ -78,47 +84,62 @@ func (s *CallService) ProcessWebhook(ctx context.Context, payload *webhook.Bland
 		zap.String("status", string(call.Status)),
 	)
 
-	// Generate quote if call completed successfully with transcript
+	// Enqueue quote generation job if call completed successfully with transcript
 	if call.Status == domain.CallStatusCompleted && call.Transcript != nil && *call.Transcript != "" {
-		go s.generateQuoteAsync(call.ID)
+		if s.jobProcessor != nil {
+			if _, err := s.jobProcessor.EnqueueJob(ctx, call.ID); err != nil {
+				s.logger.Error("failed to enqueue quote job",
+					zap.String("call_id", call.ID.String()),
+					zap.Error(err),
+				)
+				// Don't fail the whole request, quote will need manual retry
+			}
+		} else {
+			// Fallback to synchronous generation if no job processor (for backwards compatibility)
+			go s.generateQuoteAsync(call.ID)
+		}
 	}
 
 	return call, nil
 }
 
-// updateCallFromPayload updates a call record with data from the webhook payload.
-func (s *CallService) updateCallFromPayload(call *domain.Call, payload *webhook.BlandWebhookPayload) {
+// updateCallFromEvent updates a call record with data from a normalized CallEvent.
+func (s *CallService) updateCallFromEvent(call *domain.Call, event *voiceprovider.CallEvent) {
 	// Update phone numbers if provided
-	if phone := payload.GetPhoneNumber(); phone != "" {
-		call.PhoneNumber = phone
+	if event.ToNumber != "" {
+		call.PhoneNumber = event.ToNumber
 	}
-	if from := payload.GetFromNumber(); from != "" {
-		call.FromNumber = from
+	if event.FromNumber != "" {
+		call.FromNumber = event.FromNumber
+	}
+
+	// Update caller name
+	if event.CallerName != "" {
+		call.CallerName = &event.CallerName
 	}
 
 	// Update timestamps
-	if payload.StartTime != nil {
-		call.StartedAt = payload.StartTime
+	if event.StartedAt != nil {
+		call.StartedAt = event.StartedAt
 	}
-	if payload.EndTime != nil {
-		call.EndedAt = payload.EndTime
+	if event.EndedAt != nil {
+		call.EndedAt = event.EndedAt
 	}
 
 	// Update duration
-	if payload.Duration > 0 {
-		duration := payload.GetDurationSeconds()
-		call.DurationSeconds = &duration
+	if event.DurationSecs > 0 {
+		call.DurationSeconds = &event.DurationSecs
 	}
 
 	// Update transcript
-	if transcript := payload.GetTranscript(); transcript != "" {
-		call.Transcript = &transcript
+	if event.Transcript != "" {
+		call.Transcript = &event.Transcript
 	}
 
-	// Update transcript JSON
-	if len(payload.Transcripts) > 0 {
-		call.TranscriptJSON = make([]domain.TranscriptEntry, len(payload.Transcripts))
-		for i, t := range payload.Transcripts {
+	// Update transcript JSON from entries
+	if len(event.TranscriptEntries) > 0 {
+		call.TranscriptJSON = make([]domain.TranscriptEntry, len(event.TranscriptEntries))
+		for i, t := range event.TranscriptEntries {
 			call.TranscriptJSON[i] = domain.TranscriptEntry{
 				Role:      t.Role,
 				Content:   t.Content,
@@ -128,44 +149,49 @@ func (s *CallService) updateCallFromPayload(call *domain.Call, payload *webhook.
 	}
 
 	// Update recording URL
-	if payload.RecordingURL != "" {
-		call.RecordingURL = &payload.RecordingURL
+	if event.RecordingURL != "" {
+		call.RecordingURL = &event.RecordingURL
 	}
 
 	// Update extracted data
-	extracted := payload.ExtractedVariables()
-	call.ExtractedData = &domain.ExtractedData{
-		ProjectType:       extracted.ProjectType,
-		Requirements:      extracted.Requirements,
-		Timeline:          extracted.Timeline,
-		BudgetRange:       extracted.BudgetRange,
-		ContactPreference: extracted.ContactPreference,
-		CallerName:        extracted.CallerName,
-	}
+	if event.ExtractedData != nil {
+		call.ExtractedData = &domain.ExtractedData{
+			ProjectType:       event.ExtractedData.ProjectType,
+			Requirements:      event.ExtractedData.Requirements,
+			Timeline:          event.ExtractedData.Timeline,
+			BudgetRange:       event.ExtractedData.BudgetRange,
+			ContactPreference: event.ExtractedData.ContactPreference,
+			CallerName:        event.ExtractedData.CallerName,
+		}
 
-	// Update caller name if extracted
-	if extracted.CallerName != "" {
-		call.CallerName = &extracted.CallerName
+		// Update caller name from extracted data if not already set
+		if call.CallerName == nil && event.ExtractedData.CallerName != "" {
+			call.CallerName = &event.ExtractedData.CallerName
+		}
 	}
 
 	// Update status
-	switch {
-	case payload.IsCompleted():
-		call.Status = domain.CallStatusCompleted
-	case payload.IsFailed():
-		call.Status = domain.CallStatusFailed
-		if payload.ErrorMessage != "" {
-			call.ErrorMessage = &payload.ErrorMessage
-		}
-	case payload.IsNoAnswer():
-		call.Status = domain.CallStatusNoAnswer
-	default:
-		call.Status = domain.CallStatusInProgress
-	}
+	call.Status = s.mapProviderStatus(event.Status)
 
 	// Update error message if present
-	if payload.ErrorMessage != "" {
-		call.ErrorMessage = &payload.ErrorMessage
+	if event.ErrorMessage != "" {
+		call.ErrorMessage = &event.ErrorMessage
+	}
+}
+
+// mapProviderStatus converts provider status to domain status.
+func (s *CallService) mapProviderStatus(status voiceprovider.CallStatus) domain.CallStatus {
+	switch status {
+	case voiceprovider.CallStatusCompleted:
+		return domain.CallStatusCompleted
+	case voiceprovider.CallStatusFailed:
+		return domain.CallStatusFailed
+	case voiceprovider.CallStatusNoAnswer, voiceprovider.CallStatusVoicemail:
+		return domain.CallStatusNoAnswer
+	case voiceprovider.CallStatusInProgress:
+		return domain.CallStatusInProgress
+	default:
+		return domain.CallStatusPending
 	}
 }
 
