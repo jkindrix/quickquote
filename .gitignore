@@ -5,6 +5,7 @@
 
 # Binaries
 quickquote
+/server
 *.exe
 *.dll
 *.so
@@ -13,6 +14,10 @@ quickquote
 # Test coverage
 *.out
 coverage.html
+coverage.txt
+
+# Security scan results
+gosec-results.json
 
 # IDE
 .idea/
@@ -30,3 +35,4 @@ tmp/
 
 # Database data
 data/
+.tmp/
