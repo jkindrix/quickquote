@@ -36,3 +36,4 @@ tmp/
 # Database data
 data/
 .tmp/
+backups/
