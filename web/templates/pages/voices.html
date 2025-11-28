@@ -1,0 +1,153 @@
+{{define "head"}}
+<script>
+    document.addEventListener('htmx:configRequest', function(evt) {
+        evt.detail.headers['X-CSRF-Token'] = getCsrfToken();
+    });
+    function getCsrfToken() {
+        const cookies = document.cookie.split(';');
+        for (let cookie of cookies) {
+            const [name, value] = cookie.trim().split('=');
+            if (name === 'csrf_token') return value;
+        }
+        return '';
+    }
+</script>
+{{end}}
+
+{{define "content"}}
+{{template "navbar" .}}
+<main class="container">
+    <div class="page-header">
+        <h1>Voices</h1>
+        <p>Select and preview AI voices for your calls</p>
+    </div>
+
+    <div class="action-bar">
+        <div class="action-bar-left">
+            <span>Current voice: <strong>{{.CurrentVoice}}</strong></span>
+        </div>
+    </div>
+
+    {{if .Success}}
+    <div class="alert alert-success">Voice updated successfully!</div>
+    {{end}}
+
+    <div class="card">
+        <h2 style="margin-bottom: 1rem;">Available Voices</h2>
+
+        <div class="voice-grid">
+            {{range .Voices}}
+            <div class="voice-card {{if eq .ID $.CurrentVoice}}selected{{end}}">
+                <div class="voice-header">
+                    <span class="voice-name">{{.Name}}</span>
+                    <div class="voice-tags">
+                        {{if .Gender}}<span class="voice-tag">{{.Gender}}</span>{{end}}
+                        {{if .Language}}<span class="voice-tag">{{.Language}}</span>{{end}}
+                        {{range .Tags}}<span class="voice-tag">{{.}}</span>{{end}}
+                    </div>
+                </div>
+                <p class="voice-description">{{if .Description}}{{.Description}}{{else}}A natural-sounding voice for conversations{{end}}</p>
+                <div class="voice-actions">
+                    {{if .PreviewURL}}
+                    <button class="btn btn-sm btn-secondary" onclick="playPreview('{{.PreviewURL}}', this)">
+                        <span class="play-icon">&#9658;</span> Preview
+                    </button>
+                    {{end}}
+                    <form method="POST" action="/voices/select" style="display: inline;">
+                        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                        <input type="hidden" name="voice_id" value="{{.ID}}">
+                        {{if eq .ID $.CurrentVoice}}
+                        <button type="button" class="btn btn-sm" disabled>Selected</button>
+                        {{else}}
+                        <button type="submit" class="btn btn-sm">Select</button>
+                        {{end}}
+                    </form>
+                </div>
+            </div>
+            {{else}}
+            <div class="empty-state" style="grid-column: 1 / -1;">
+                <div class="empty-state-icon">&#127908;</div>
+                <h3>No Voices Available</h3>
+                <p>Unable to load voices from the API</p>
+            </div>
+            {{end}}
+        </div>
+    </div>
+
+    <div class="card" style="margin-top: 1.5rem;">
+        <h2>Voice Settings</h2>
+        <p style="color: #666; margin-bottom: 1rem;">Fine-tune how the selected voice sounds</p>
+
+        <form method="POST" action="/voices/settings">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Stability</label>
+                    <div class="range-group">
+                        <input type="range" name="stability" min="0" max="100" value="{{printf "%.0f" (mul .VoiceSettings.Stability 100)}}" oninput="this.nextElementSibling.textContent = this.value + '%'">
+                        <span class="range-value">{{printf "%.0f" (mul .VoiceSettings.Stability 100)}}%</span>
+                    </div>
+                    <span class="form-hint">Higher = more consistent, Lower = more expressive</span>
+                </div>
+                <div class="form-group">
+                    <label>Clarity</label>
+                    <div class="range-group">
+                        <input type="range" name="similarity_boost" min="0" max="100" value="{{printf "%.0f" (mul .VoiceSettings.SimilarityBoost 100)}}" oninput="this.nextElementSibling.textContent = this.value + '%'">
+                        <span class="range-value">{{printf "%.0f" (mul .VoiceSettings.SimilarityBoost 100)}}%</span>
+                    </div>
+                    <span class="form-hint">Voice clarity and naturalness</span>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Style</label>
+                    <div class="range-group">
+                        <input type="range" name="style" min="0" max="100" value="{{printf "%.0f" (mul .VoiceSettings.Style 100)}}" oninput="this.nextElementSibling.textContent = this.value + '%'">
+                        <span class="range-value">{{printf "%.0f" (mul .VoiceSettings.Style 100)}}%</span>
+                    </div>
+                    <span class="form-hint">Expressiveness and emotion variation</span>
+                </div>
+                <div class="form-group">
+                    <div class="toggle-group">
+                        <div class="toggle-label">
+                            <span>Speaker Boost</span>
+                            <span>Enhanced voice clarity</span>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" name="speaker_boost" {{if .VoiceSettings.SpeakerBoost}}checked{{end}}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1rem;">
+                <button type="submit" class="btn">Save Voice Settings</button>
+            </div>
+        </form>
+    </div>
+</main>
+
+<script>
+let currentAudio = null;
+
+function playPreview(url, button) {
+    if (currentAudio) {
+        currentAudio.pause();
+        currentAudio = null;
+        document.querySelectorAll('.play-icon').forEach(icon => icon.innerHTML = '&#9658;');
+    }
+
+    if (url) {
+        currentAudio = new Audio(url);
+        currentAudio.play();
+        button.querySelector('.play-icon').innerHTML = '&#9632;';
+        currentAudio.onended = function() {
+            button.querySelector('.play-icon').innerHTML = '&#9658;';
+            currentAudio = null;
+        };
+    }
+}
+</script>
+{{end}}

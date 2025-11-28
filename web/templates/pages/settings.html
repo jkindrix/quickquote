@@ -1,0 +1,205 @@
+{{define "head"}}
+<script>
+    document.addEventListener('htmx:configRequest', function(evt) {
+        evt.detail.headers['X-CSRF-Token'] = getCsrfToken();
+    });
+    function getCsrfToken() {
+        const cookies = document.cookie.split(';');
+        for (let cookie of cookies) {
+            const [name, value] = cookie.trim().split('=');
+            if (name === 'csrf_token') return value;
+        }
+        return '';
+    }
+    function updateRangeValue(input, displayId) {
+        document.getElementById(displayId).textContent = input.value;
+    }
+</script>
+{{end}}
+
+{{define "content"}}
+{{template "navbar" .}}
+<main class="container">
+    <div class="page-header">
+        <h1>Call Settings</h1>
+        <p>Configure your inbound call experience and AI agent behavior</p>
+    </div>
+
+    {{if .Success}}
+    <div class="alert alert-success">Settings saved successfully!</div>
+    {{end}}
+    {{if .Error}}
+    <div class="alert alert-error">{{.Error}}</div>
+    {{end}}
+
+    <form method="POST" action="/settings" class="card">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+
+        <div class="settings-section">
+            <h3>Business Identity</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="business_name">Business Name</label>
+                    <input type="text" id="business_name" name="business_name" value="{{.Settings.BusinessName}}" placeholder="QuickQuote">
+                    <span class="form-hint">This name is used in greetings and throughout the conversation</span>
+                </div>
+                <div class="form-group">
+                    <label for="project_types">Project Types Offered</label>
+                    <input type="text" id="project_types" name="project_types" value="{{.Settings.ProjectTypes}}" placeholder="web_app,mobile_app,api,ecommerce">
+                    <span class="form-hint">Comma-separated list of project types you offer quotes for</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <h3>Voice Configuration</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="voice">Voice</label>
+                    <select id="voice" name="voice">
+                        <option value="maya" {{if eq .Settings.Voice "maya"}}selected{{end}}>Maya (Female, Warm)</option>
+                        <option value="matt" {{if eq .Settings.Voice "matt"}}selected{{end}}>Matt (Male, Professional)</option>
+                        <option value="josh" {{if eq .Settings.Voice "josh"}}selected{{end}}>Josh (Male, Friendly)</option>
+                        <option value="evelyn" {{if eq .Settings.Voice "evelyn"}}selected{{end}}>Evelyn (Female, Calm)</option>
+                        <option value="mason" {{if eq .Settings.Voice "mason"}}selected{{end}}>Mason (Male, Energetic)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="language">Language</label>
+                    <select id="language" name="language">
+                        <option value="en-US" {{if eq .Settings.Language "en-US"}}selected{{end}}>English (US)</option>
+                        <option value="en-GB" {{if eq .Settings.Language "en-GB"}}selected{{end}}>English (UK)</option>
+                        <option value="es" {{if eq .Settings.Language "es"}}selected{{end}}>Spanish</option>
+                        <option value="fr" {{if eq .Settings.Language "fr"}}selected{{end}}>French</option>
+                        <option value="de" {{if eq .Settings.Language "de"}}selected{{end}}>German</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Voice Stability: <span id="stability_value">{{printf "%.0f" (mul .Settings.VoiceStability 100)}}%</span></label>
+                    <div class="range-group">
+                        <input type="range" name="voice_stability" min="0" max="100" value="{{printf "%.0f" (mul .Settings.VoiceStability 100)}}" oninput="updateRangeValue(this, 'stability_value'); this.nextElementSibling.textContent = this.value + '%'">
+                        <span class="range-value">{{printf "%.0f" (mul .Settings.VoiceStability 100)}}%</span>
+                    </div>
+                    <span class="form-hint">Higher = more consistent, Lower = more expressive</span>
+                </div>
+                <div class="form-group">
+                    <label>Voice Clarity: <span id="clarity_value">{{printf "%.0f" (mul .Settings.VoiceSimilarityBoost 100)}}%</span></label>
+                    <div class="range-group">
+                        <input type="range" name="voice_similarity_boost" min="0" max="100" value="{{printf "%.0f" (mul .Settings.VoiceSimilarityBoost 100)}}" oninput="this.nextElementSibling.textContent = this.value + '%'">
+                        <span class="range-value">{{printf "%.0f" (mul .Settings.VoiceSimilarityBoost 100)}}%</span>
+                    </div>
+                    <span class="form-hint">Voice clarity and naturalness</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <h3>AI Model Settings</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="model">AI Model</label>
+                    <select id="model" name="model">
+                        <option value="enhanced" {{if eq .Settings.Model "enhanced"}}selected{{end}}>Enhanced (Recommended)</option>
+                        <option value="base" {{if eq .Settings.Model "base"}}selected{{end}}>Base (Faster)</option>
+                    </select>
+                    <span class="form-hint">Enhanced provides better conversation quality</span>
+                </div>
+                <div class="form-group">
+                    <label for="quality_preset">Quality Preset</label>
+                    <select id="quality_preset" name="quality_preset">
+                        <option value="default" {{if eq .Settings.QualityPreset "default"}}selected{{end}}>Default (Balanced)</option>
+                        <option value="high_quality" {{if eq .Settings.QualityPreset "high_quality"}}selected{{end}}>High Quality</option>
+                        <option value="fast_response" {{if eq .Settings.QualityPreset "fast_response"}}selected{{end}}>Fast Response</option>
+                        <option value="accessibility" {{if eq .Settings.QualityPreset "accessibility"}}selected{{end}}>Accessibility</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Temperature: <span id="temp_value">{{printf "%.1f" .Settings.Temperature}}</span></label>
+                    <div class="range-group">
+                        <input type="range" name="temperature" min="0" max="100" value="{{printf "%.0f" (mul .Settings.Temperature 100)}}" oninput="this.nextElementSibling.textContent = (this.value / 100).toFixed(1)">
+                        <span class="range-value">{{printf "%.1f" .Settings.Temperature}}</span>
+                    </div>
+                    <span class="form-hint">Lower = more consistent responses, Higher = more creative</span>
+                </div>
+                <div class="form-group">
+                    <label>Response Speed (ms): <span id="interrupt_value">{{.Settings.InterruptionThreshold}}</span></label>
+                    <div class="range-group">
+                        <input type="range" name="interruption_threshold" min="50" max="500" step="10" value="{{.Settings.InterruptionThreshold}}" oninput="this.nextElementSibling.textContent = this.value">
+                        <span class="range-value">{{.Settings.InterruptionThreshold}}</span>
+                    </div>
+                    <span class="form-hint">Lower = faster response, Higher = more listening time</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <h3>Call Behavior</h3>
+            <div class="toggle-group">
+                <div class="toggle-label">
+                    <span>Wait for Greeting</span>
+                    <span>Agent waits for caller to speak first on inbound calls</span>
+                </div>
+                <label class="toggle">
+                    <input type="checkbox" name="wait_for_greeting" {{if .Settings.WaitForGreeting}}checked{{end}}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="toggle-group">
+                <div class="toggle-label">
+                    <span>Noise Cancellation</span>
+                    <span>Filter background noise for cleaner audio</span>
+                </div>
+                <label class="toggle">
+                    <input type="checkbox" name="noise_cancellation" {{if .Settings.NoiseCancellation}}checked{{end}}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="toggle-group">
+                <div class="toggle-label">
+                    <span>Record Calls</span>
+                    <span>Record calls for quality assurance and review</span>
+                </div>
+                <label class="toggle">
+                    <input type="checkbox" name="record_calls" {{if .Settings.RecordCalls}}checked{{end}}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="form-row" style="margin-top: 1rem;">
+                <div class="form-group">
+                    <label for="background_track">Background Audio</label>
+                    <select id="background_track" name="background_track">
+                        <option value="none" {{if eq .Settings.BackgroundTrack "none"}}selected{{end}}>None</option>
+                        <option value="office" {{if eq .Settings.BackgroundTrack "office"}}selected{{end}}>Office (Recommended)</option>
+                        <option value="cafe" {{if eq .Settings.BackgroundTrack "cafe"}}selected{{end}}>Cafe</option>
+                        <option value="restaurant" {{if eq .Settings.BackgroundTrack "restaurant"}}selected{{end}}>Restaurant</option>
+                    </select>
+                    <span class="form-hint">Subtle ambient audio for natural feel</span>
+                </div>
+                <div class="form-group">
+                    <label for="max_duration">Max Call Duration (minutes)</label>
+                    <input type="number" id="max_duration" name="max_duration" value="{{.Settings.MaxDurationMinutes}}" min="1" max="60">
+                    <span class="form-hint">Maximum length before call ends</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <h3>Custom Greeting (Optional)</h3>
+            <div class="form-group">
+                <label for="custom_greeting">Opening Message</label>
+                <textarea id="custom_greeting" name="custom_greeting" placeholder="Leave empty to use default: Hello! Thank you for calling [Business Name]. I'm here to help you get a quote for your software project...">{{.Settings.CustomGreeting}}</textarea>
+                <span class="form-hint">The first thing the AI says when answering a call</span>
+            </div>
+        </div>
+
+        <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+            <a href="/settings/test" class="btn btn-secondary">Test Configuration</a>
+            <button type="submit" class="btn">Save Settings</button>
+        </div>
+    </form>
+</main>
+{{end}}

@@ -33,12 +33,34 @@ func NewTemplateEngine(templatesDir string, logger *zap.Logger) (*TemplateEngine
 		"formatTime": func(t time.Time) string {
 			return t.Format("Jan 2, 2006 3:04 PM")
 		},
+		"formatDate": func(t time.Time) string {
+			return t.Format("Jan 2, 2006")
+		},
 		"add": func(a, b int) int {
 			return a + b
 		},
 		"subtract": func(a, b int) int {
 			return a - b
 		},
+		"mul": func(a, b float64) float64 {
+			return a * b
+		},
+		"div": func(a, b float64) float64 {
+			if b == 0 {
+				return 0
+			}
+			return a / b
+		},
+		"gt": func(a, b float64) bool {
+			return a > b
+		},
+		"lt": func(a, b float64) bool {
+			return a < b
+		},
+		"eq": func(a, b interface{}) bool {
+			return a == b
+		},
+		"printf": fmt.Sprintf,
 		"deref": func(s *string) string {
 			if s == nil {
 				return ""
@@ -50,6 +72,15 @@ func NewTemplateEngine(templatesDir string, logger *zap.Logger) (*TemplateEngine
 				return 0
 			}
 			return *i
+		},
+		"truncate": func(s string, maxLen int) string {
+			if len(s) <= maxLen {
+				return s
+			}
+			if maxLen <= 3 {
+				return s[:maxLen]
+			}
+			return s[:maxLen-3] + "..."
 		},
 	}
 

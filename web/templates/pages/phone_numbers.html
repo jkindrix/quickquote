@@ -1,0 +1,159 @@
+{{define "head"}}
+<script>
+    document.addEventListener('htmx:configRequest', function(evt) {
+        evt.detail.headers['X-CSRF-Token'] = getCsrfToken();
+    });
+    function getCsrfToken() {
+        const cookies = document.cookie.split(';');
+        for (let cookie of cookies) {
+            const [name, value] = cookie.trim().split('=');
+            if (name === 'csrf_token') return value;
+        }
+        return '';
+    }
+</script>
+{{end}}
+
+{{define "content"}}
+{{template "navbar" .}}
+<main class="container">
+    <div class="page-header">
+        <h1>Phone Numbers</h1>
+        <p>Manage your inbound phone numbers and call routing</p>
+    </div>
+
+    <div class="action-bar">
+        <div class="action-bar-left">
+            <span>{{len .PhoneNumbers}} number{{if ne (len .PhoneNumbers) 1}}s{{end}} configured</span>
+        </div>
+        <a href="/phone-numbers/purchase" class="btn btn-success">+ Purchase Number</a>
+    </div>
+
+    {{if .Success}}
+    <div class="alert alert-success">{{.Success}}</div>
+    {{end}}
+    {{if .Error}}
+    <div class="alert alert-error">{{.Error}}</div>
+    {{end}}
+
+    <div class="card">
+        {{if .PhoneNumbers}}
+        <div class="voice-grid">
+            {{range .PhoneNumbers}}
+            <div class="number-card">
+                <div class="number-header">
+                    <span class="number-value">{{.PhoneNumber}}</span>
+                    <div class="number-status">
+                        <span class="status-dot {{if eq .Status "active"}}active{{else}}inactive{{end}}"></span>
+                        <span>{{.Status}}</span>
+                    </div>
+                </div>
+                <div class="number-details">
+                    <div>
+                        <strong>Type:</strong> {{if .Type}}{{.Type}}{{else}}Local{{end}}
+                    </div>
+                    <div>
+                        <strong>Region:</strong> {{if .Region}}{{.Region}}{{else}}US{{end}}
+                    </div>
+                    {{if .InboundConfig}}
+                    <div>
+                        <strong>Voice:</strong> {{if .InboundConfig.Voice}}{{.InboundConfig.Voice}}{{else}}Default{{end}}
+                    </div>
+                    <div>
+                        <strong>Recording:</strong> {{if .InboundConfig.Record}}Enabled{{else}}Disabled{{end}}
+                    </div>
+                    {{end}}
+                </div>
+                <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
+                    <a href="/phone-numbers/{{.ID}}/configure" class="btn btn-sm">Configure</a>
+                    <button class="btn btn-sm btn-secondary" onclick="testNumber('{{.ID}}')">Test Call</button>
+                </div>
+            </div>
+            {{end}}
+        </div>
+        {{else}}
+        <div class="empty-state">
+            <div class="empty-state-icon">&#128222;</div>
+            <h3>No Phone Numbers</h3>
+            <p>Purchase a phone number to start receiving inbound calls</p>
+            <a href="/phone-numbers/purchase" class="btn" style="margin-top: 1rem;">Purchase Number</a>
+        </div>
+        {{end}}
+    </div>
+
+    {{if .PhoneNumbers}}
+    <div class="card" style="margin-top: 1.5rem;">
+        <h2>Blocked Numbers</h2>
+        <p style="color: #666; margin-bottom: 1rem;">Numbers blocked from calling your lines</p>
+
+        {{if .BlockedNumbers}}
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Phone Number</th>
+                    <th>Reason</th>
+                    <th>Blocked</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .BlockedNumbers}}
+                <tr>
+                    <td>{{.PhoneNumber}}</td>
+                    <td>{{if .Reason}}{{.Reason}}{{else}}-{{end}}</td>
+                    <td>{{formatTime .CreatedAt}}</td>
+                    <td>
+                        <form method="POST" action="/phone-numbers/unblock/{{.ID}}" style="display: inline;">
+                            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                            <button type="submit" class="btn btn-sm btn-danger">Unblock</button>
+                        </form>
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+        {{else}}
+        <p style="text-align: center; padding: 1rem; color: #999;">No blocked numbers</p>
+        {{end}}
+
+        <form method="POST" action="/phone-numbers/block" style="margin-top: 1rem; display: flex; gap: 0.5rem; align-items: flex-end;">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <div class="form-group" style="flex: 1; margin: 0;">
+                <label for="block_number">Block a Number</label>
+                <input type="text" id="block_number" name="phone_number" placeholder="+1234567890">
+            </div>
+            <div class="form-group" style="flex: 1; margin: 0;">
+                <label for="block_reason">Reason (optional)</label>
+                <input type="text" id="block_reason" name="reason" placeholder="Spam caller">
+            </div>
+            <button type="submit" class="btn btn-danger">Block</button>
+        </form>
+    </div>
+    {{end}}
+</main>
+
+<script>
+function testNumber(numberId) {
+    const phone = prompt("Enter your phone number to receive a test call:");
+    if (phone) {
+        fetch('/api/phone-numbers/' + numberId + '/test', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCsrfToken()
+            },
+            body: JSON.stringify({ target_number: phone })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                alert('Test call initiated! You should receive a call shortly.');
+            } else {
+                alert('Failed to initiate test call: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(err => alert('Error: ' + err.message));
+    }
+}
+</script>
+{{end}}

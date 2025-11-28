@@ -1,0 +1,207 @@
+{{define "content"}}
+{{template "navbar" .}}
+<main class="container">
+    <div class="page-header">
+        <h1>Usage & Billing</h1>
+        <p>Monitor your API usage and costs</p>
+    </div>
+
+    <div class="usage-grid">
+        <div class="usage-card">
+            <h4>Total Calls</h4>
+            <div class="usage-value">{{.Usage.TotalCalls}}</div>
+            <div class="usage-subtitle">This month</div>
+        </div>
+        <div class="usage-card">
+            <h4>Total Minutes</h4>
+            <div class="usage-value">{{printf "%.1f" .Usage.TotalMinutes}}</div>
+            <div class="usage-subtitle">This month</div>
+        </div>
+        <div class="usage-card">
+            <h4>Estimated Cost</h4>
+            <div class="usage-value {{if gt .Usage.TotalCost .Usage.CostLimit}}danger{{else if gt .Usage.TotalCost (mul .Usage.CostLimit 0.8)}}warning{{end}}">${{printf "%.2f" .Usage.TotalCost}}</div>
+            {{if gt .Usage.CostLimit 0}}
+            <div class="progress">
+                <div class="progress-bar {{if gt .Usage.TotalCost .Usage.CostLimit}}danger{{else if gt .Usage.TotalCost (mul .Usage.CostLimit 0.8)}}warning{{end}}" style="width: {{printf "%.0f" (div (mul .Usage.TotalCost 100) .Usage.CostLimit)}}%"></div>
+            </div>
+            <div class="usage-subtitle">of ${{printf "%.2f" .Usage.CostLimit}} limit</div>
+            {{else}}
+            <div class="usage-subtitle">No limit set</div>
+            {{end}}
+        </div>
+        <div class="usage-card">
+            <h4>Avg Call Duration</h4>
+            <div class="usage-value">{{printf "%.1f" .Usage.AvgDuration}}</div>
+            <div class="usage-subtitle">minutes</div>
+        </div>
+    </div>
+
+    <div class="detail-grid">
+        <div class="card">
+            <h2>Cost Breakdown</h2>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Category</th>
+                        <th>Usage</th>
+                        <th>Cost</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Inbound Calls</td>
+                        <td>{{.Usage.InboundCalls}} calls</td>
+                        <td>${{printf "%.2f" .Usage.InboundCost}}</td>
+                    </tr>
+                    <tr>
+                        <td>Outbound Calls</td>
+                        <td>{{.Usage.OutboundCalls}} calls</td>
+                        <td>${{printf "%.2f" .Usage.OutboundCost}}</td>
+                    </tr>
+                    <tr>
+                        <td>Transcription</td>
+                        <td>{{printf "%.1f" .Usage.TranscriptionMinutes}} min</td>
+                        <td>${{printf "%.2f" .Usage.TranscriptionCost}}</td>
+                    </tr>
+                    <tr>
+                        <td>Analysis</td>
+                        <td>{{.Usage.AnalysisCount}} analyses</td>
+                        <td>${{printf "%.2f" .Usage.AnalysisCost}}</td>
+                    </tr>
+                    <tr>
+                        <td>Phone Numbers</td>
+                        <td>{{.Usage.PhoneNumberCount}} numbers</td>
+                        <td>${{printf "%.2f" .Usage.PhoneNumberCost}}</td>
+                    </tr>
+                </tbody>
+                <tfoot>
+                    <tr style="font-weight: 600;">
+                        <td>Total</td>
+                        <td></td>
+                        <td>${{printf "%.2f" .Usage.TotalCost}}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+
+        <div class="card">
+            <h2>Usage Limits</h2>
+            <form method="POST" action="/usage/limits">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+
+                <div class="form-group">
+                    <label for="cost_limit">Monthly Cost Limit ($)</label>
+                    <input type="number" id="cost_limit" name="cost_limit" value="{{printf "%.0f" .Usage.CostLimit}}" min="0" step="10" placeholder="No limit">
+                    <span class="form-hint">Get alerts when approaching this limit</span>
+                </div>
+
+                <div class="form-group">
+                    <label for="minute_limit">Monthly Minute Limit</label>
+                    <input type="number" id="minute_limit" name="minute_limit" value="{{printf "%.0f" .Usage.MinuteLimit}}" min="0" step="100" placeholder="No limit">
+                    <span class="form-hint">Maximum minutes per month</span>
+                </div>
+
+                <div class="form-group">
+                    <label for="call_limit">Daily Call Limit</label>
+                    <input type="number" id="call_limit" name="call_limit" value="{{.Usage.DailyCallLimit}}" min="0" step="10" placeholder="No limit">
+                    <span class="form-hint">Maximum calls per day</span>
+                </div>
+
+                <button type="submit" class="btn" style="margin-top: 1rem;">Update Limits</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card" style="margin-top: 1.5rem;">
+        <div class="card-header">
+            <h2>Daily Usage (Last 7 Days)</h2>
+        </div>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Calls</th>
+                    <th>Minutes</th>
+                    <th>Cost</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .DailyUsage}}
+                <tr>
+                    <td>{{formatDate .Date}}</td>
+                    <td>{{.Calls}}</td>
+                    <td>{{printf "%.1f" .Minutes}}</td>
+                    <td>${{printf "%.2f" .Cost}}</td>
+                </tr>
+                {{else}}
+                <tr>
+                    <td colspan="4" style="text-align: center; color: #666;">No usage data yet</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+
+    {{if .Alerts}}
+    <div class="card" style="margin-top: 1.5rem;">
+        <h2>Active Alerts</h2>
+        {{range .Alerts}}
+        <div class="alert {{if eq .Type "warning"}}alert-warning{{else}}alert-error{{end}}" style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <strong>{{.Title}}</strong>
+                <p style="margin: 0.25rem 0 0;">{{.Message}}</p>
+            </div>
+            <form method="POST" action="/usage/alerts/{{.ID}}/acknowledge">
+                <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                <button type="submit" class="btn btn-sm btn-secondary">Dismiss</button>
+            </form>
+        </div>
+        {{end}}
+    </div>
+    {{end}}
+
+    <div class="card" style="margin-top: 1.5rem;">
+        <h2>Pricing Information</h2>
+        <p style="color: #666; margin-bottom: 1rem;">Current rates for Bland AI services</p>
+
+        <div class="detail-grid">
+            <div>
+                <table class="table">
+                    <tbody>
+                        <tr>
+                            <td>Inbound Calls</td>
+                            <td>${{printf "%.4f" .Pricing.InboundPerMinute}}/min</td>
+                        </tr>
+                        <tr>
+                            <td>Outbound Calls</td>
+                            <td>${{printf "%.4f" .Pricing.OutboundPerMinute}}/min</td>
+                        </tr>
+                        <tr>
+                            <td>Transcription</td>
+                            <td>${{printf "%.4f" .Pricing.TranscriptionPerMinute}}/min</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div>
+                <table class="table">
+                    <tbody>
+                        <tr>
+                            <td>Call Analysis</td>
+                            <td>${{printf "%.4f" .Pricing.AnalysisPerCall}}/call</td>
+                        </tr>
+                        <tr>
+                            <td>Phone Numbers</td>
+                            <td>${{printf "%.2f" .Pricing.PhoneNumberPerMonth}}/month</td>
+                        </tr>
+                        <tr>
+                            <td>Enhanced Model</td>
+                            <td>+${{printf "%.4f" .Pricing.EnhancedModelPremium}}/min</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</main>
+{{end}}

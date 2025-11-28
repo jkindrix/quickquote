@@ -30,6 +30,9 @@ type AIHealthChecker interface {
 type Handler struct {
 	callService      *service.CallService
 	authService      *service.AuthService
+	blandService     *service.BlandService
+	promptService    *service.PromptService
+	settingsService  *service.SettingsService
 	healthChecker    HealthChecker
 	aiHealthChecker  AIHealthChecker
 	loginRateLimiter *middleware.LoginRateLimiter
@@ -77,6 +80,21 @@ func (h *Handler) SetCSRFProtection(csrf *middleware.CSRFProtection) {
 	h.csrfProtection = csrf
 }
 
+// SetBlandService sets the Bland API service.
+func (h *Handler) SetBlandService(bs *service.BlandService) {
+	h.blandService = bs
+}
+
+// SetPromptService sets the Prompt service.
+func (h *Handler) SetPromptService(ps *service.PromptService) {
+	h.promptService = ps
+}
+
+// SetSettingsService sets the Settings service.
+func (h *Handler) SetSettingsService(ss *service.SettingsService) {
+	h.settingsService = ss
+}
+
 // RegisterRoutes registers all routes on the router.
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	// Public routes
@@ -100,10 +118,45 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Group(func(r chi.Router) {
 		r.Use(h.AuthMiddleware)
 
+		// Dashboard and calls
 		r.Get("/dashboard", h.HandleDashboard)
 		r.Get("/calls", h.HandleCallsList)
 		r.Get("/calls/{id}", h.HandleCallDetail)
 		r.Post("/calls/{id}/regenerate-quote", h.HandleRegenerateQuote)
+
+		// Settings
+		r.Get("/settings", h.HandleSettingsPage)
+		r.Post("/settings", h.HandleSettingsUpdate)
+
+		// Phone Numbers
+		r.Get("/phone-numbers", h.HandlePhoneNumbersPage)
+		r.Post("/phone-numbers/block", h.HandleBlockNumber)
+		r.Post("/phone-numbers/unblock/{id}", h.HandleUnblockNumber)
+
+		// Voices
+		r.Get("/voices", h.HandleVoicesPage)
+		r.Post("/voices/select", h.HandleVoiceSelect)
+		r.Post("/voices/settings", h.HandleVoiceSettingsUpdate)
+
+		// Usage
+		r.Get("/usage", h.HandleUsagePage)
+		r.Post("/usage/limits", h.HandleUsageLimitsUpdate)
+
+		// Knowledge Bases
+		r.Get("/knowledge-bases", h.HandleKnowledgeBasesPage)
+		r.Post("/knowledge-bases/create", h.HandleKnowledgeBaseCreate)
+		r.Post("/knowledge-bases/update", h.HandleKnowledgeBaseUpdate)
+		r.Post("/knowledge-bases/delete/{id}", h.HandleKnowledgeBaseDelete)
+		r.Get("/knowledge-bases/content/{id}", h.HandleKnowledgeBaseContent)
+
+		// Presets (Prompts)
+		r.Get("/presets", h.HandlePresetsPage)
+		r.Post("/presets/create", h.HandlePresetCreate)
+		r.Get("/presets/{id}/edit", h.HandlePresetEditPage)
+		r.Post("/presets/{id}/update", h.HandlePresetUpdate)
+		r.Post("/presets/{id}/delete", h.HandlePresetDelete)
+		r.Post("/presets/{id}/default", h.HandlePresetSetDefault)
+		r.Post("/presets/apply", h.HandlePresetApply)
 	})
 
 	// Health and readiness endpoints

@@ -44,6 +44,7 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	h.renderTemplate(w, r, "dashboard", map[string]interface{}{
 		"Title":         "Dashboard",
+		"ActiveNav":     "dashboard",
 		"User":          user,
 		"Calls":         calls,
 		"TotalCalls":    total,
@@ -78,6 +79,7 @@ func (h *Handler) HandleCallsList(w http.ResponseWriter, r *http.Request) {
 
 	h.renderTemplate(w, r, "calls", map[string]interface{}{
 		"Title":      "Calls",
+		"ActiveNav":  "calls",
 		"User":       user,
 		"Calls":      calls,
 		"TotalCalls": total,
@@ -110,9 +112,10 @@ func (h *Handler) HandleCallDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.renderTemplate(w, r, "call_detail", map[string]interface{}{
-		"Title": "Call Details",
-		"User":  user,
-		"Call":  call,
+		"Title":     "Call Details",
+		"ActiveNav": "calls",
+		"User":      user,
+		"Call":      call,
 	})
 }
 
