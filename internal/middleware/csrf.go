@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -322,18 +323,33 @@ func (c *CSRFProtection) GetToken(r *http.Request) string {
 }
 
 // SkipPath wraps the middleware to skip CSRF checks for specific paths.
+// Paths ending with "/" are treated as prefixes (e.g., "/api/" matches "/api/v1/foo").
 func (c *CSRFProtection) SkipPath(paths ...string) func(http.Handler) http.Handler {
-	pathSet := make(map[string]bool)
+	exactPaths := make(map[string]bool)
+	var prefixPaths []string
+
 	for _, p := range paths {
-		pathSet[p] = true
+		if strings.HasSuffix(p, "/") {
+			prefixPaths = append(prefixPaths, p)
+		} else {
+			exactPaths[p] = true
+		}
 	}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Skip CSRF for specified paths (like webhooks)
-			if pathSet[r.URL.Path] {
+			// Skip CSRF for exact path matches
+			if exactPaths[r.URL.Path] {
 				next.ServeHTTP(w, r)
 				return
+			}
+
+			// Skip CSRF for prefix matches
+			for _, prefix := range prefixPaths {
+				if strings.HasPrefix(r.URL.Path, prefix) {
+					next.ServeHTTP(w, r)
+					return
+				}
 			}
 
 			c.Middleware(next).ServeHTTP(w, r)

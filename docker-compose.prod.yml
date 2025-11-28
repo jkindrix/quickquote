@@ -29,8 +29,11 @@ services:
       - BLAND_WEBHOOK_SECRET=${BLAND_WEBHOOK_SECRET:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - SESSION_SECRET=${SESSION_SECRET}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - SESSION_DURATION=24h
       - APP_PUBLIC_URL=https://quickquote.jdok.dev
+      - WEBHOOK_BASE_URL=https://quickquote.jdok.dev
       - LOG_LEVEL=info
       - LOG_FORMAT=json
     labels:

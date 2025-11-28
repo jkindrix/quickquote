@@ -21,6 +21,7 @@ type Config struct {
 	App           AppConfig
 	Log           LogConfig
 	RateLimit     RateLimitConfig
+	CallSettings  CallSettingsConfig
 
 	// Backward compatibility - deprecated, use VoiceProvider.Bland instead
 	Bland BlandConfig
@@ -131,6 +132,44 @@ type RateLimitConfig struct {
 	Window   time.Duration
 }
 
+// CallSettingsConfig holds inbound call configuration.
+type CallSettingsConfig struct {
+	// Business identity
+	BusinessName string
+
+	// Voice configuration
+	Voice                 string
+	VoiceStability        float64
+	VoiceSimilarityBoost  float64
+	VoiceStyle            float64
+	VoiceSpeakerBoost     bool
+
+	// Model configuration
+	Model       string // "base" or "enhanced"
+	Language    string
+	Temperature float64
+
+	// Conversation settings
+	InterruptionThreshold int  // milliseconds (50-500)
+	WaitForGreeting       bool
+	NoiseCancellation     bool
+	BackgroundTrack       string // "none", "office", "cafe", "restaurant"
+
+	// Call limits
+	MaxDurationMinutes int
+	RecordCalls        bool
+
+	// Quality preset (overrides individual settings if set)
+	// Options: "default", "high_quality", "fast_response", "accessibility"
+	QualityPreset string
+
+	// Custom greeting (optional)
+	CustomGreeting string
+
+	// Project types offered (comma-separated)
+	ProjectTypes string
+}
+
 // Load reads configuration from environment variables and config files.
 // Environment variables take precedence over config file values.
 func Load() (*Config, error) {
@@ -224,6 +263,26 @@ func Load() (*Config, error) {
 			Requests: v.GetInt("rate_limit.requests"),
 			Window:   v.GetDuration("rate_limit.window"),
 		},
+		CallSettings: CallSettingsConfig{
+			BusinessName:          v.GetString("call.business_name"),
+			Voice:                 v.GetString("call.voice"),
+			VoiceStability:        v.GetFloat64("call.voice_stability"),
+			VoiceSimilarityBoost:  v.GetFloat64("call.voice_similarity_boost"),
+			VoiceStyle:            v.GetFloat64("call.voice_style"),
+			VoiceSpeakerBoost:     v.GetBool("call.voice_speaker_boost"),
+			Model:                 v.GetString("call.model"),
+			Language:              v.GetString("call.language"),
+			Temperature:           v.GetFloat64("call.temperature"),
+			InterruptionThreshold: v.GetInt("call.interruption_threshold"),
+			WaitForGreeting:       v.GetBool("call.wait_for_greeting"),
+			NoiseCancellation:     v.GetBool("call.noise_cancellation"),
+			BackgroundTrack:       v.GetString("call.background_track"),
+			MaxDurationMinutes:    v.GetInt("call.max_duration_minutes"),
+			RecordCalls:           v.GetBool("call.record"),
+			QualityPreset:         v.GetString("call.quality_preset"),
+			CustomGreeting:        v.GetString("call.custom_greeting"),
+			ProjectTypes:          v.GetString("call.project_types"),
+		},
 	}
 
 	// Backward compatibility: if legacy Bland config is set but new config is not,
@@ -287,6 +346,25 @@ func setDefaults(v *viper.Viper) {
 	// Rate limit defaults
 	v.SetDefault("rate_limit.requests", 100)
 	v.SetDefault("rate_limit.window", "1m")
+
+	// Call settings defaults (optimized for quote collection)
+	v.SetDefault("call.business_name", "QuickQuote")
+	v.SetDefault("call.voice", "maya")
+	v.SetDefault("call.voice_stability", 0.75)
+	v.SetDefault("call.voice_similarity_boost", 0.80)
+	v.SetDefault("call.voice_style", 0.3)
+	v.SetDefault("call.voice_speaker_boost", true)
+	v.SetDefault("call.model", "enhanced")
+	v.SetDefault("call.language", "en-US")
+	v.SetDefault("call.temperature", 0.6)
+	v.SetDefault("call.interruption_threshold", 100)
+	v.SetDefault("call.wait_for_greeting", true)
+	v.SetDefault("call.noise_cancellation", true)
+	v.SetDefault("call.background_track", "office")
+	v.SetDefault("call.max_duration_minutes", 15)
+	v.SetDefault("call.record", true)
+	v.SetDefault("call.quality_preset", "default")
+	v.SetDefault("call.project_types", "web_app,mobile_app,api,ecommerce,custom_software,integration")
 }
 
 // Validate checks that all required configuration values are present.
@@ -342,3 +420,16 @@ func (c *Config) IsDevelopment() bool {
 func (c *Config) IsProduction() bool {
 	return c.Server.Environment == "production"
 }
+
+// GetProjectTypes returns the project types as a slice.
+func (c *CallSettingsConfig) GetProjectTypes() []string {
+	if c.ProjectTypes == "" {
+		return []string{"web_app", "mobile_app", "api", "ecommerce", "custom_software", "integration"}
+	}
+	types := strings.Split(c.ProjectTypes, ",")
+	for i := range types {
+		types[i] = strings.TrimSpace(types[i])
+	}
+	return types
+}
+
