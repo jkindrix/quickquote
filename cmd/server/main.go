@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/jkindrix/quickquote/internal/ai"
+	"github.com/jkindrix/quickquote/internal/bland"
 	"github.com/jkindrix/quickquote/internal/config"
 	"github.com/jkindrix/quickquote/internal/database"
 	"github.com/jkindrix/quickquote/internal/handler"
@@ -24,7 +25,7 @@ import (
 	"github.com/jkindrix/quickquote/internal/service"
 	"github.com/jkindrix/quickquote/internal/shutdown"
 	"github.com/jkindrix/quickquote/internal/voiceprovider"
-	"github.com/jkindrix/quickquote/internal/voiceprovider/bland"
+	blandprovider "github.com/jkindrix/quickquote/internal/voiceprovider/bland"
 	"github.com/jkindrix/quickquote/internal/voiceprovider/retell"
 	"github.com/jkindrix/quickquote/internal/voiceprovider/vapi"
 )
@@ -58,15 +59,66 @@ func main() {
 	}
 	// Note: db.Close() is handled by shutdown coordinator
 
-	// Initialize repositories
-	callRepo := repository.NewCallRepository(db.Pool)
+	// Run database migrations automatically on startup
+	migrator := database.NewMigrator(db.Pool, logger)
+	if err := migrator.MigrateFromDir(ctx, "migrations"); err != nil {
+		logger.Fatal("failed to run database migrations", zap.Error(err))
+	}
+	logger.Info("database migrations completed successfully")
+
+	// Initialize repositories (needed for user seeding)
 	userRepo := repository.NewUserRepository(db.Pool)
 	sessionRepo := repository.NewSessionRepository(db.Pool)
+
+	// Initialize auth service early for admin user seeding
+	authService := service.NewAuthService(
+		userRepo,
+		sessionRepo,
+		cfg.Auth.SessionDuration,
+		logger,
+	)
+
+	// Seed initial admin user if no users exist (enables zero-config deployment)
+	adminEmail := os.Getenv("ADMIN_EMAIL")
+	adminPassword := os.Getenv("ADMIN_PASSWORD")
+	if adminEmail != "" && adminPassword != "" {
+		created, err := authService.EnsureAdminUser(ctx, adminEmail, adminPassword)
+		if err != nil {
+			logger.Warn("failed to ensure admin user", zap.Error(err))
+		} else if created {
+			logger.Info("initial admin user created from environment variables")
+		}
+	} else {
+		logger.Debug("ADMIN_EMAIL/ADMIN_PASSWORD not set, skipping admin user seed")
+	}
+
+	// Initialize remaining repositories
+	callRepo := repository.NewCallRepository(db.Pool)
 	quoteJobRepo := repository.NewQuoteJobRepository(db.Pool)
 	csrfRepo := repository.NewCSRFRepository(db.Pool)
+	promptRepo := repository.NewPromptRepository(db.Pool)
+	settingsRepo := repository.NewSettingsRepository(db.Pool)
+
+	// Initialize Bland entity repositories (for local caching)
+	knowledgeBaseRepo := repository.NewKnowledgeBaseRepository(db.Pool)
+	pathwayRepo := repository.NewPathwayRepository(db.Pool)
+	personaRepo := repository.NewPersonaRepository(db.Pool)
+	_ = knowledgeBaseRepo // Available for future use
+	_ = pathwayRepo       // Available for future use
+	_ = personaRepo       // Available for future use
 
 	// Initialize AI client
 	claudeClient := ai.NewClaudeClient(&cfg.Anthropic, logger)
+
+	// Initialize Bland API client (for full API capabilities)
+	blandAPIKey := cfg.VoiceProvider.Bland.APIKey
+	if blandAPIKey == "" {
+		blandAPIKey = cfg.Bland.APIKey
+	}
+	blandClient := bland.New(&bland.Config{
+		APIKey: blandAPIKey,
+	}, logger)
+	logger.Info("initialized Bland API client")
 
 	// Initialize voice provider registry
 	providerRegistry := initVoiceProviders(cfg, logger)
@@ -94,12 +146,33 @@ func main() {
 
 	// Initialize services
 	callService := service.NewCallService(callRepo, claudeClient, jobProcessor, logger)
-	authService := service.NewAuthService(
-		userRepo,
-		sessionRepo,
-		cfg.Auth.SessionDuration,
+
+	// Build webhook URL for Bland callbacks
+	// In production, this should be configured to your public URL
+	webhookURL := fmt.Sprintf("http://%s:%d/webhook/bland", cfg.Server.Host, cfg.Server.Port)
+	if os.Getenv("WEBHOOK_BASE_URL") != "" {
+		webhookURL = os.Getenv("WEBHOOK_BASE_URL") + "/webhook/bland"
+	}
+
+	// Initialize Bland service (for full API access)
+	blandService := service.NewBlandService(
+		blandClient,
+		callRepo,
+		promptRepo,
+		webhookURL,
 		logger,
 	)
+	logger.Info("initialized Bland service", zap.String("webhook_url", webhookURL))
+
+	// Initialize prompt service
+	promptService := service.NewPromptService(promptRepo, logger)
+
+	// Initialize settings service
+	settingsService := service.NewSettingsService(settingsRepo, logger)
+	logger.Info("initialized settings service")
+
+	// Connect settings service to bland service for settings-driven configs
+	blandService.SetSettingsService(settingsService)
 
 	// Initialize rate limiters
 	rateLimiter := middleware.NewRateLimiter(cfg.RateLimit.Requests, cfg.RateLimit.Window, logger)
@@ -122,9 +195,18 @@ func main() {
 	h.SetLoginRateLimiter(loginRateLimiter)
 	h.SetCSRFProtection(csrfProtection)
 	h.SetProviderRegistry(providerRegistry)
+	h.SetBlandService(blandService)
+	h.SetPromptService(promptService)
+	h.SetSettingsService(settingsService)
 	if templateEngine != nil {
 		h.SetTemplateEngine(templateEngine)
 	}
+
+	// Initialize API handlers
+	callAPIHandler := handler.NewCallAPIHandler(blandService, logger)
+	promptAPIHandler := handler.NewPromptAPIHandler(promptService, logger)
+	promptAPIHandler.SetBlandService(blandService) // Enable apply-to-inbound functionality
+	blandAPIHandler := handler.NewBlandAPIHandler(blandService, logger)
 
 	// Initialize request correlation
 	correlation := middleware.NewRequestCorrelation(logger)
@@ -140,14 +222,28 @@ func main() {
 	r.Use(chimiddleware.Compress(5))
 	r.Use(middleware.RateLimit(rateLimiter))
 
-	// CSRF protection (skip webhook endpoints)
-	r.Use(csrfProtection.SkipPath("/webhook/bland", "/health", "/ready", "/live"))
+	// CSRF protection (skip webhook endpoints and API routes)
+	r.Use(csrfProtection.SkipPath("/webhook/bland", "/health", "/ready", "/live", "/api/"))
 
 	// Serve static files
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))))
 
 	// Register routes
 	h.RegisterRoutes(r)
+
+	// Register API v1 routes
+	r.Route("/api/v1", func(r chi.Router) {
+		callAPIHandler.RegisterRoutes(r)
+		promptAPIHandler.RegisterRoutes(r)
+		blandAPIHandler.RegisterRoutes(r)
+	})
+	logger.Info("registered API v1 routes",
+		zap.Strings("endpoints", []string{
+			"/api/v1/calls/*",
+			"/api/v1/prompts/*",
+			"/api/v1/bland/*",
+		}),
+	)
 
 	// Create server
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
@@ -254,7 +350,7 @@ func initVoiceProviders(cfg *config.Config, logger *zap.Logger) *voiceprovider.R
 
 	// Register Bland provider if enabled
 	if cfg.VoiceProvider.Bland.Enabled || cfg.Bland.APIKey != "" {
-		blandCfg := &bland.Config{
+		blandCfg := &blandprovider.Config{
 			APIKey:        cfg.VoiceProvider.Bland.APIKey,
 			WebhookSecret: cfg.VoiceProvider.Bland.WebhookSecret,
 			APIURL:        cfg.VoiceProvider.Bland.APIURL,
@@ -265,7 +361,7 @@ func initVoiceProviders(cfg *config.Config, logger *zap.Logger) *voiceprovider.R
 			blandCfg.WebhookSecret = cfg.Bland.WebhookSecret
 			blandCfg.APIURL = cfg.Bland.APIURL
 		}
-		registry.Register(bland.New(blandCfg, logger))
+		registry.Register(blandprovider.New(blandCfg, logger))
 		logger.Info("registered Bland voice provider")
 	}
 

@@ -44,6 +44,9 @@ type UserRepository interface {
 
 	// Update updates an existing user.
 	Update(ctx context.Context, user *User) error
+
+	// Count returns the total number of users.
+	Count(ctx context.Context) (int64, error)
 }
 
 // SessionRepository defines the interface for session data persistence.

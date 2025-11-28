@@ -121,6 +121,16 @@ func (r *UserRepository) Update(ctx context.Context, user *domain.User) error {
 	return nil
 }
 
+// Count returns the total number of users.
+func (r *UserRepository) Count(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.pool.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count users: %w", err)
+	}
+	return count, nil
+}
+
 // SessionRepository implements domain.SessionRepository using PostgreSQL.
 type SessionRepository struct {
 	pool *pgxpool.Pool

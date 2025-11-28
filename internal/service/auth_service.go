@@ -240,6 +240,41 @@ func (s *AuthService) CleanupExpiredSessions(ctx context.Context) error {
 	return s.sessionRepo.DeleteExpired(ctx)
 }
 
+// EnsureAdminUser creates an admin user if no users exist in the system.
+// This enables zero-config deployment by seeding credentials from environment variables.
+func (s *AuthService) EnsureAdminUser(ctx context.Context, email, password string) (bool, error) {
+	// Check if any users exist
+	count, err := s.userRepo.Count(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to count users: %w", err)
+	}
+
+	if count > 0 {
+		s.logger.Debug("users already exist, skipping admin seed",
+			zap.Int64("user_count", count),
+		)
+		return false, nil
+	}
+
+	// Validate credentials
+	if email == "" || password == "" {
+		return false, errors.New("admin email and password required for initial setup")
+	}
+
+	// Create admin user
+	user, err := s.CreateUser(ctx, email, password)
+	if err != nil {
+		return false, fmt.Errorf("failed to create admin user: %w", err)
+	}
+
+	s.logger.Info("initial admin user created",
+		zap.String("user_id", user.ID.String()),
+		zap.String("email", email),
+	)
+
+	return true, nil
+}
+
 // generateToken generates a cryptographically secure random token.
 func generateToken() (string, error) {
 	bytes := make([]byte, tokenLength)
