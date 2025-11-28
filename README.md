@@ -21,7 +21,7 @@ QuickQuote is a production-ready web application that:
 
 ## Tech Stack
 
-- **Backend**: Go 1.22 with Chi router
+- **Backend**: Go 1.23 with Chi router
 - **Database**: PostgreSQL 16
 - **Voice AI**: Bland AI, Vapi, Retell (pluggable architecture)
 - **Quote Generation**: Anthropic Claude
@@ -63,9 +63,22 @@ QuickQuote is a production-ready web application that:
 
 ## Development
 
+### Makefile Commands
+
+The project includes a comprehensive Makefile. Run `make help` for all available commands:
+
+```bash
+make help           # Show all commands
+make dev            # Run with hot reload
+make test           # Run all tests
+make prod-deploy    # Full production deployment
+make prod-backup    # Backup production database
+make prod-logs      # View production logs
+```
+
 ### Building
 
-The application uses a multi-stage Docker build. Go 1.22 compiles the binary in the first stage, then it runs in a minimal Alpine container.
+The application uses a multi-stage Docker build. Go 1.23 compiles the binary in the first stage, then it runs in a minimal Alpine container.
 
 To rebuild after code changes:
 ```bash
@@ -78,24 +91,26 @@ docker-compose up -d
 Since Go is not installed on the host, run tests via Docker:
 
 ```bash
-docker run --rm -v /path/to/quickquote:/app -w /app golang:1.22-alpine go test ./...
+docker run --rm -v /path/to/quickquote:/app -w /app golang:1.23-alpine go test ./...
 ```
 
 For verbose output:
 ```bash
-docker run --rm -v /path/to/quickquote:/app -w /app golang:1.22-alpine go test ./... -v
+docker run --rm -v /path/to/quickquote:/app -w /app golang:1.23-alpine go test ./... -v
 ```
 
 ### Database Migrations
 
-Migrations are in `/migrations/` and must be applied manually:
+Migrations run **automatically on application startup**. The app tracks applied migrations in a `schema_migrations` table and only runs pending ones.
+
+Migration files are in `/migrations/` with naming convention: `NNN_description.up.sql` and `NNN_description.down.sql`.
 
 ```bash
-# Apply a migration
-docker exec -i quickquote-db psql -U quickquote -d quickquote < migrations/001_initial_schema.up.sql
-
-# Rollback a migration
+# Manually rollback a migration (if needed)
 docker exec -i quickquote-db psql -U quickquote -d quickquote < migrations/001_initial_schema.down.sql
+
+# Check migration status
+docker exec quickquote-db psql -U quickquote -d quickquote -c "SELECT * FROM schema_migrations ORDER BY version;"
 ```
 
 ### Docker Compose Files
@@ -119,10 +134,23 @@ The production setup uses Traefik for reverse proxy and TLS termination.
    docker-compose -f docker-compose.prod.yml up -d --build
    ```
 
-4. Apply any pending migrations:
-   ```bash
-   docker exec -i quickquote-db psql -U quickquote -d quickquote < migrations/002_session_security.up.sql
-   ```
+Migrations run automatically on startup - no manual steps required.
+
+### Zero-Config Deployment
+
+QuickQuote supports fully automated deployment. On a fresh start:
+
+1. **Database schema** - Auto-created via migrations
+2. **Default settings** - Seeded via migrations (call settings, pricing)
+3. **Admin user** - Created from `ADMIN_EMAIL`/`ADMIN_PASSWORD` environment variables
+
+To enable zero-config deployment, set these environment variables:
+```bash
+ADMIN_EMAIL=admin@yourcompany.com
+ADMIN_PASSWORD=your-secure-password
+```
+
+The admin user is only created if no users exist in the database.
 
 ### Container Management
 
@@ -138,6 +166,72 @@ docker exec quickquote-app wget -qO- http://127.0.0.1:8080/health
 
 # Remove orphaned containers (when switching compose files)
 docker-compose -f docker-compose.prod.yml down --remove-orphans
+```
+
+## Operations
+
+### Database Backup & Restore
+
+```bash
+# Create backup
+docker exec quickquote-db pg_dump -U quickquote quickquote > backup_$(date +%Y%m%d_%H%M%S).sql
+
+# Restore from backup
+docker exec -i quickquote-db psql -U quickquote -d quickquote < backup_20250101_120000.sql
+
+# Automated daily backup (add to cron)
+0 2 * * * docker exec quickquote-db pg_dump -U quickquote quickquote | gzip > /backups/quickquote_$(date +\%Y\%m\%d).sql.gz
+```
+
+### Health Monitoring
+
+The `/health` endpoint returns detailed status:
+```json
+{
+  "status": "ok",
+  "checks": {
+    "database": {"status": "healthy"},
+    "ai_service": {"status": "healthy"},
+    "voice_providers": {"status": "healthy"}
+  }
+}
+```
+
+Monitor this endpoint with your preferred monitoring tool (Uptime Robot, Healthchecks.io, etc.).
+
+### Log Management
+
+Logs are written to stdout in JSON format (production) or console format (development).
+
+```bash
+# Stream logs
+docker-compose -f docker-compose.prod.yml logs -f app
+
+# Filter for errors
+docker-compose -f docker-compose.prod.yml logs app 2>&1 | grep '"level":"error"'
+
+# Export logs for analysis
+docker-compose -f docker-compose.prod.yml logs --no-color app > app.log
+```
+
+### Credential Rotation
+
+1. **Database password**: Update in `.env` and restart both containers
+2. **API keys**: Update in `.env` and restart app container
+3. **Session secret**: Update in `.env`; existing sessions will be invalidated
+
+### Disaster Recovery
+
+To fully rebuild from scratch:
+```bash
+# Destroy everything (WARNING: deletes all data)
+docker-compose -f docker-compose.prod.yml down -v
+
+# Start fresh (migrations and admin user auto-created)
+docker-compose -f docker-compose.prod.yml up -d
+
+# Optionally restore data from backup
+docker exec -i quickquote-db psql -U quickquote -d quickquote < backup.sql
 ```
 
 ## API Endpoints
@@ -166,6 +260,9 @@ docker-compose -f docker-compose.prod.yml down --remove-orphans
 | `ANTHROPIC_API_KEY` | Claude API key |
 | `SESSION_SECRET` | Session encryption key |
 | `APP_PUBLIC_URL` | Public URL of the application |
+| `WEBHOOK_BASE_URL` | Base URL for voice provider webhooks |
+| `ADMIN_EMAIL` | Initial admin email (zero-config deployment) |
+| `ADMIN_PASSWORD` | Initial admin password (zero-config deployment) |
 
 ### Voice Provider Configuration
 
