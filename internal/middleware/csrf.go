@@ -98,11 +98,16 @@ func (c *CSRFProtection) cleanup() {
 
 // GenerateToken generates a new CSRF token.
 func (c *CSRFProtection) GenerateToken() (string, error) {
-	return c.GenerateTokenForSession(nil)
+	return c.GenerateTokenWithContext(context.Background(), nil)
 }
 
 // GenerateTokenForSession generates a new CSRF token, optionally tied to a session.
 func (c *CSRFProtection) GenerateTokenForSession(sessionID *uuid.UUID) (string, error) {
+	return c.GenerateTokenWithContext(context.Background(), sessionID)
+}
+
+// GenerateTokenWithContext generates a new CSRF token using the provided context.
+func (c *CSRFProtection) GenerateTokenWithContext(ctx context.Context, sessionID *uuid.UUID) (string, error) {
 	bytes := make([]byte, csrfTokenLength)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", err
@@ -112,10 +117,10 @@ func (c *CSRFProtection) GenerateTokenForSession(sessionID *uuid.UUID) (string, 
 
 	// If we have a repo, persist to database
 	if c.repo != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
-		csrfToken, err := c.repo.GetOrCreate(ctx, sessionID, token, csrfTokenExpiry)
+		csrfToken, err := c.repo.GetOrCreate(dbCtx, sessionID, token, csrfTokenExpiry)
 		if err != nil {
 			c.logger.Error("failed to persist CSRF token", zap.Error(err))
 			// Fall back to in-memory storage
@@ -138,12 +143,17 @@ func (c *CSRFProtection) GenerateTokenForSession(sessionID *uuid.UUID) (string, 
 
 // ValidateToken checks if a token is valid.
 func (c *CSRFProtection) ValidateToken(token string) bool {
+	return c.ValidateTokenWithContext(context.Background(), token)
+}
+
+// ValidateTokenWithContext checks if a token is valid using the provided context.
+func (c *CSRFProtection) ValidateTokenWithContext(ctx context.Context, token string) bool {
 	// Try database first if available
 	if c.repo != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
-		_, err := c.repo.GetByToken(ctx, token)
+		_, err := c.repo.GetByToken(dbCtx, token)
 		if err == nil {
 			return true
 		}
@@ -174,12 +184,17 @@ func (c *CSRFProtection) ValidateToken(token string) bool {
 
 // InvalidateToken removes a token after use (for one-time tokens).
 func (c *CSRFProtection) InvalidateToken(token string) {
+	c.InvalidateTokenWithContext(context.Background(), token)
+}
+
+// InvalidateTokenWithContext removes a token after use using the provided context.
+func (c *CSRFProtection) InvalidateTokenWithContext(ctx context.Context, token string) {
 	// Remove from database if available
 	if c.repo != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
-		if err := c.repo.MarkUsed(ctx, token); err != nil && !errors.Is(err, repository.ErrNotFound) {
+		if err := c.repo.MarkUsed(dbCtx, token); err != nil && !errors.Is(err, repository.ErrNotFound) {
 			c.logger.Error("failed to mark CSRF token as used", zap.Error(err))
 		}
 	}
@@ -194,10 +209,12 @@ func (c *CSRFProtection) InvalidateToken(token string) {
 // It sets a CSRF cookie and validates it on state-changing requests.
 func (c *CSRFProtection) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
 		// Skip for safe methods
 		if isSafeMethod(r.Method) {
 			// Ensure a token exists in cookie for forms to use
-			c.ensureTokenCookie(w, r)
+			c.ensureTokenCookie(ctx, w, r)
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -234,8 +251,8 @@ func (c *CSRFProtection) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Validate token is known to us
-		if !c.ValidateToken(cookieToken) {
+		// Validate token is known to us (use request context)
+		if !c.ValidateTokenWithContext(ctx, cookieToken) {
 			c.logger.Warn("CSRF: token not in store",
 				zap.String("path", r.URL.Path),
 				zap.String("method", r.Method),
@@ -249,17 +266,17 @@ func (c *CSRFProtection) Middleware(next http.Handler) http.Handler {
 }
 
 // ensureTokenCookie ensures a CSRF token cookie is set.
-func (c *CSRFProtection) ensureTokenCookie(w http.ResponseWriter, r *http.Request) {
+func (c *CSRFProtection) ensureTokenCookie(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	// Check if cookie already exists
 	if cookie, err := r.Cookie(csrfCookieName); err == nil && cookie.Value != "" {
-		// Validate it's still valid
-		if c.ValidateToken(cookie.Value) {
+		// Validate it's still valid (use request context)
+		if c.ValidateTokenWithContext(ctx, cookie.Value) {
 			return
 		}
 	}
 
-	// Generate new token
-	token, err := c.GenerateToken()
+	// Generate new token (use request context)
+	token, err := c.GenerateTokenWithContext(ctx, nil)
 	if err != nil {
 		c.logger.Error("failed to generate CSRF token", zap.Error(err))
 		return
