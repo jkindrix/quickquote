@@ -242,6 +242,12 @@ func (m *MockUserRepository) Update(ctx context.Context, user *domain.User) erro
 	return nil
 }
 
+func (m *MockUserRepository) Count(ctx context.Context) (int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return int64(len(m.users)), nil
+}
+
 // MockSessionRepository is a mock implementation of domain.SessionRepository for testing.
 type MockSessionRepository struct {
 	mu       sync.RWMutex

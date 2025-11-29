@@ -29,46 +29,23 @@ func (m *mockAIHealthChecker) IsCircuitOpen() bool {
 	return m.circuitOpen
 }
 
-func TestNew(t *testing.T) {
+func TestNewHealthHandler(t *testing.T) {
 	logger := zap.NewNop()
 
-	h := New(nil, nil, logger)
+	h := NewHealthHandler(HealthHandlerConfig{
+		Logger: logger,
+	})
 
 	if h == nil {
 		t.Fatal("expected non-nil handler")
 	}
-	if h.logger != logger {
-		t.Error("expected logger to be set")
-	}
 }
 
-func TestHandler_SetHealthChecker(t *testing.T) {
+func TestHealthHandler_HandleLiveness(t *testing.T) {
 	logger := zap.NewNop()
-	h := New(nil, nil, logger)
-
-	hc := &mockHealthChecker{}
-	h.SetHealthChecker(hc)
-
-	if h.healthChecker != hc {
-		t.Error("expected health checker to be set")
-	}
-}
-
-func TestHandler_SetAIHealthChecker(t *testing.T) {
-	logger := zap.NewNop()
-	h := New(nil, nil, logger)
-
-	ahc := &mockAIHealthChecker{}
-	h.SetAIHealthChecker(ahc)
-
-	if h.aiHealthChecker != ahc {
-		t.Error("expected AI health checker to be set")
-	}
-}
-
-func TestHandler_HandleLiveness(t *testing.T) {
-	logger := zap.NewNop()
-	h := New(nil, nil, logger)
+	h := NewHealthHandler(HealthHandlerConfig{
+		Logger: logger,
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/live", http.NoBody)
 	rr := httptest.NewRecorder()
@@ -83,9 +60,11 @@ func TestHandler_HandleLiveness(t *testing.T) {
 	}
 }
 
-func TestHandler_HandleReadiness_NoHealthChecker(t *testing.T) {
+func TestHealthHandler_HandleReadiness_NoHealthChecker(t *testing.T) {
 	logger := zap.NewNop()
-	h := New(nil, nil, logger)
+	h := NewHealthHandler(HealthHandlerConfig{
+		Logger: logger,
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/ready", http.NoBody)
 	rr := httptest.NewRecorder()
@@ -100,10 +79,12 @@ func TestHandler_HandleReadiness_NoHealthChecker(t *testing.T) {
 	}
 }
 
-func TestHandler_HandleReadiness_HealthyDatabase(t *testing.T) {
+func TestHealthHandler_HandleReadiness_HealthyDatabase(t *testing.T) {
 	logger := zap.NewNop()
-	h := New(nil, nil, logger)
-	h.SetHealthChecker(&mockHealthChecker{pingErr: nil})
+	h := NewHealthHandler(HealthHandlerConfig{
+		HealthChecker: &mockHealthChecker{pingErr: nil},
+		Logger:        logger,
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/ready", http.NoBody)
 	rr := httptest.NewRecorder()
@@ -115,10 +96,12 @@ func TestHandler_HandleReadiness_HealthyDatabase(t *testing.T) {
 	}
 }
 
-func TestHandler_HandleReadiness_UnhealthyDatabase(t *testing.T) {
+func TestHealthHandler_HandleReadiness_UnhealthyDatabase(t *testing.T) {
 	logger := zap.NewNop()
-	h := New(nil, nil, logger)
-	h.SetHealthChecker(&mockHealthChecker{pingErr: errors.New("database error")})
+	h := NewHealthHandler(HealthHandlerConfig{
+		HealthChecker: &mockHealthChecker{pingErr: errors.New("database error")},
+		Logger:        logger,
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/ready", http.NoBody)
 	rr := httptest.NewRecorder()
@@ -130,11 +113,13 @@ func TestHandler_HandleReadiness_UnhealthyDatabase(t *testing.T) {
 	}
 }
 
-func TestHandler_HandleHealth_AllHealthy(t *testing.T) {
+func TestHealthHandler_HandleHealth_AllHealthy(t *testing.T) {
 	logger := zap.NewNop()
-	h := New(nil, nil, logger)
-	h.SetHealthChecker(&mockHealthChecker{pingErr: nil})
-	h.SetAIHealthChecker(&mockAIHealthChecker{circuitOpen: false})
+	h := NewHealthHandler(HealthHandlerConfig{
+		HealthChecker:   &mockHealthChecker{pingErr: nil},
+		AIHealthChecker: &mockAIHealthChecker{circuitOpen: false},
+		Logger:          logger,
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/health", http.NoBody)
 	rr := httptest.NewRecorder()
@@ -161,10 +146,12 @@ func TestHandler_HandleHealth_AllHealthy(t *testing.T) {
 	}
 }
 
-func TestHandler_HandleHealth_DatabaseUnhealthy(t *testing.T) {
+func TestHealthHandler_HandleHealth_DatabaseUnhealthy(t *testing.T) {
 	logger := zap.NewNop()
-	h := New(nil, nil, logger)
-	h.SetHealthChecker(&mockHealthChecker{pingErr: errors.New("connection refused")})
+	h := NewHealthHandler(HealthHandlerConfig{
+		HealthChecker: &mockHealthChecker{pingErr: errors.New("connection refused")},
+		Logger:        logger,
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/health", http.NoBody)
 	rr := httptest.NewRecorder()
@@ -188,11 +175,13 @@ func TestHandler_HandleHealth_DatabaseUnhealthy(t *testing.T) {
 	}
 }
 
-func TestHandler_HandleHealth_AICircuitOpen(t *testing.T) {
+func TestHealthHandler_HandleHealth_AICircuitOpen(t *testing.T) {
 	logger := zap.NewNop()
-	h := New(nil, nil, logger)
-	h.SetHealthChecker(&mockHealthChecker{pingErr: nil})
-	h.SetAIHealthChecker(&mockAIHealthChecker{circuitOpen: true})
+	h := NewHealthHandler(HealthHandlerConfig{
+		HealthChecker:   &mockHealthChecker{pingErr: nil},
+		AIHealthChecker: &mockAIHealthChecker{circuitOpen: true},
+		Logger:          logger,
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/health", http.NoBody)
 	rr := httptest.NewRecorder()
@@ -217,9 +206,11 @@ func TestHandler_HandleHealth_AICircuitOpen(t *testing.T) {
 	}
 }
 
-func TestHandler_HandleHealth_NoCheckers(t *testing.T) {
+func TestHealthHandler_HandleHealth_NoCheckers(t *testing.T) {
 	logger := zap.NewNop()
-	h := New(nil, nil, logger)
+	h := NewHealthHandler(HealthHandlerConfig{
+		Logger: logger,
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/health", http.NoBody)
 	rr := httptest.NewRecorder()
@@ -314,5 +305,59 @@ func TestVoiceProviderHealth_JSONSerialization(t *testing.T) {
 	}
 	if decoded.IsPrimary != vph.IsPrimary {
 		t.Errorf("is_primary mismatch")
+	}
+}
+
+func TestBaseHandler_WriteJSON(t *testing.T) {
+	logger := zap.NewNop()
+	h := NewBaseHandler(BaseHandlerConfig{
+		Logger: logger,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
+	rr := httptest.NewRecorder()
+
+	h.WriteJSON(rr, req, http.StatusOK, map[string]string{"foo": "bar"})
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("expected Content-Type 'application/json', got %q", ct)
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["foo"] != "bar" {
+		t.Errorf("expected foo=bar, got %q", resp["foo"])
+	}
+}
+
+func TestBaseHandler_WriteError(t *testing.T) {
+	logger := zap.NewNop()
+	h := NewBaseHandler(BaseHandlerConfig{
+		Logger: logger,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
+	rr := httptest.NewRecorder()
+
+	h.WriteError(rr, req, http.StatusBadRequest, "test error")
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, rr.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["error"] != "test error" {
+		t.Errorf("expected error='test error', got %q", resp["error"])
+	}
+	if resp["status"] != float64(http.StatusBadRequest) {
+		t.Errorf("expected status=%d, got %v", http.StatusBadRequest, resp["status"])
 	}
 }

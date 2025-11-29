@@ -188,19 +188,48 @@ func main() {
 		logger.Warn("failed to initialize template engine, using inline templates", zap.Error(err))
 	}
 
-	// Initialize handlers
-	h := handler.New(callService, authService, logger)
-	h.SetHealthChecker(db)
-	h.SetAIHealthChecker(claudeClient)
-	h.SetLoginRateLimiter(loginRateLimiter)
-	h.SetCSRFProtection(csrfProtection)
-	h.SetProviderRegistry(providerRegistry)
-	h.SetBlandService(blandService)
-	h.SetPromptService(promptService)
-	h.SetSettingsService(settingsService)
-	if templateEngine != nil {
-		h.SetTemplateEngine(templateEngine)
+	// Initialize focused handlers with constructor injection
+	baseHandlerCfg := handler.BaseHandlerConfig{
+		TemplateEngine: templateEngine,
+		CSRFProtection: csrfProtection,
+		Logger:         logger,
 	}
+
+	// Auth handler for login/logout/session management
+	authHandler := handler.NewAuthHandler(handler.AuthHandlerConfig{
+		Base:             baseHandlerCfg,
+		AuthService:      authService,
+		LoginRateLimiter: loginRateLimiter,
+	})
+
+	// Health handler for health check endpoints
+	healthHandler := handler.NewHealthHandler(handler.HealthHandlerConfig{
+		HealthChecker:    db,
+		AIHealthChecker:  claudeClient,
+		ProviderRegistry: providerRegistry,
+		Logger:           logger,
+	})
+
+	// Webhook handler for voice provider callbacks
+	webhookHandler := handler.NewWebhookHandler(handler.WebhookHandlerConfig{
+		CallService:      callService,
+		ProviderRegistry: providerRegistry,
+		Logger:           logger,
+	})
+
+	// Calls handler for dashboard and call management
+	callsHandler := handler.NewCallsHandler(handler.CallsHandlerConfig{
+		Base:        baseHandlerCfg,
+		CallService: callService,
+	})
+
+	// Admin handler for settings, voices, usage, etc.
+	adminHandler := handler.NewAdminHandler(handler.AdminHandlerConfig{
+		Base:            baseHandlerCfg,
+		BlandService:    blandService,
+		PromptService:   promptService,
+		SettingsService: settingsService,
+	})
 
 	// Initialize API handlers
 	callAPIHandler := handler.NewCallAPIHandler(blandService, logger)
@@ -228,8 +257,25 @@ func main() {
 	// Serve static files
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))))
 
-	// Register routes
-	h.RegisterRoutes(r)
+	// Register public routes (auth handlers)
+	authHandler.RegisterRoutes(r)
+
+	// Register webhook routes (no auth required)
+	webhookHandler.RegisterRoutes(r)
+
+	// Register health check routes
+	healthHandler.RegisterRoutes(r)
+
+	// Register protected routes (require authentication)
+	r.Group(func(r chi.Router) {
+		r.Use(authHandler.Middleware)
+
+		// Dashboard and calls
+		callsHandler.RegisterRoutes(r)
+
+		// Admin pages (settings, phone numbers, voices, usage, knowledge bases, presets)
+		adminHandler.RegisterRoutes(r)
+	})
 
 	// Register API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
