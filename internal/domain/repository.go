@@ -21,14 +21,11 @@ type CallRepository interface {
 	// Update updates an existing call record.
 	Update(ctx context.Context, call *Call) error
 
-	// List retrieves calls with pagination.
-	List(ctx context.Context, limit, offset int) ([]*Call, error)
+	// List retrieves calls with pagination and optional filtering.
+	List(ctx context.Context, filter *CallListFilter, limit, offset int) ([]*Call, error)
 
-	// Count returns the total number of calls.
-	Count(ctx context.Context) (int, error)
-
-	// ListByStatus retrieves calls filtered by status.
-	ListByStatus(ctx context.Context, status CallStatus, limit, offset int) ([]*Call, error)
+	// Count returns the total number of calls for the provided filter.
+	Count(ctx context.Context, filter *CallListFilter) (int, error)
 }
 
 // UserRepository defines the interface for user data persistence.

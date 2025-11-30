@@ -26,12 +26,15 @@ type QuoteJobProcessor struct {
 	pollInterval    time.Duration
 	batchSize       int
 	stuckJobTimeout time.Duration
+	workerCount     int
 
 	// Lifecycle
-	stopCh  chan struct{}
-	wg      sync.WaitGroup
-	mu      sync.RWMutex
-	running bool
+	stopCh   chan struct{}
+	jobCh    chan *domain.QuoteJob
+	wg       sync.WaitGroup
+	workerWg sync.WaitGroup
+	mu       sync.RWMutex
+	running  bool
 }
 
 // QuoteJobProcessorConfig holds configuration for the processor.
@@ -39,6 +42,7 @@ type QuoteJobProcessorConfig struct {
 	PollInterval    time.Duration
 	BatchSize       int
 	StuckJobTimeout time.Duration
+	WorkerCount     int
 }
 
 // DefaultQuoteJobProcessorConfig returns sensible defaults.
@@ -47,6 +51,7 @@ func DefaultQuoteJobProcessorConfig() *QuoteJobProcessorConfig {
 		PollInterval:    5 * time.Second,
 		BatchSize:       10,
 		StuckJobTimeout: 5 * time.Minute,
+		WorkerCount:     3,
 	}
 }
 
@@ -63,6 +68,11 @@ func NewQuoteJobProcessor(
 		config = DefaultQuoteJobProcessorConfig()
 	}
 
+	workerCount := config.WorkerCount
+	if workerCount < 1 {
+		workerCount = 1
+	}
+
 	return &QuoteJobProcessor{
 		jobRepo:         jobRepo,
 		callRepo:        callRepo,
@@ -72,7 +82,9 @@ func NewQuoteJobProcessor(
 		pollInterval:    config.PollInterval,
 		batchSize:       config.BatchSize,
 		stuckJobTimeout: config.StuckJobTimeout,
+		workerCount:     workerCount,
 		stopCh:          make(chan struct{}),
+		jobCh:           make(chan *domain.QuoteJob, config.BatchSize),
 	}
 }
 
@@ -89,6 +101,7 @@ func (p *QuoteJobProcessor) Start(ctx context.Context) error {
 	p.logger.Info("starting quote job processor",
 		zap.Duration("poll_interval", p.pollInterval),
 		zap.Int("batch_size", p.batchSize),
+		zap.Int("worker_count", p.workerCount),
 	)
 
 	// Recover any stuck jobs from previous runs
@@ -96,6 +109,13 @@ func (p *QuoteJobProcessor) Start(ctx context.Context) error {
 		p.logger.Error("failed to recover stuck jobs", zap.Error(err))
 	}
 
+	// Start worker pool
+	for i := 0; i < p.workerCount; i++ {
+		p.workerWg.Add(1)
+		go p.worker(i)
+	}
+
+	// Start the dispatcher
 	p.wg.Add(1)
 	go p.runLoop()
 
@@ -113,21 +133,38 @@ func (p *QuoteJobProcessor) Stop(ctx context.Context) error {
 	p.mu.Unlock()
 
 	p.logger.Info("stopping quote job processor")
+
+	// Signal stop to dispatcher
 	close(p.stopCh)
 
-	// Wait for goroutine with timeout
-	done := make(chan struct{})
+	// Wait for dispatcher to finish (which closes jobCh)
+	dispatcherDone := make(chan struct{})
 	go func() {
 		p.wg.Wait()
-		close(done)
+		close(p.jobCh) // Signal workers to stop
+		close(dispatcherDone)
 	}()
 
 	select {
-	case <-done:
+	case <-dispatcherDone:
+	case <-ctx.Done():
+		p.logger.Warn("dispatcher stop timed out")
+		return ctx.Err()
+	}
+
+	// Wait for all workers to finish
+	workersDone := make(chan struct{})
+	go func() {
+		p.workerWg.Wait()
+		close(workersDone)
+	}()
+
+	select {
+	case <-workersDone:
 		p.logger.Info("quote job processor stopped gracefully")
 		return nil
 	case <-ctx.Done():
-		p.logger.Warn("quote job processor stop timed out")
+		p.logger.Warn("workers stop timed out")
 		return ctx.Err()
 	}
 }
@@ -198,7 +235,7 @@ func (p *QuoteJobProcessor) runLoop() {
 	}
 }
 
-// processBatch processes a batch of pending jobs.
+// processBatch fetches pending jobs and dispatches them to workers.
 func (p *QuoteJobProcessor) processBatch() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -213,16 +250,30 @@ func (p *QuoteJobProcessor) processBatch() {
 		return
 	}
 
-	p.logger.Debug("processing job batch", zap.Int("count", len(jobs)))
+	p.logger.Debug("dispatching job batch to workers", zap.Int("count", len(jobs)))
 
 	for _, job := range jobs {
 		select {
 		case <-p.stopCh:
 			return
-		default:
-			p.processJob(ctx, job)
+		case p.jobCh <- job:
+			// Job dispatched to worker
 		}
 	}
+}
+
+// worker processes jobs from the job channel.
+func (p *QuoteJobProcessor) worker(id int) {
+	defer p.workerWg.Done()
+
+	logger := p.logger.With(zap.Int("worker_id", id))
+	logger.Debug("worker started")
+
+	for job := range p.jobCh {
+		p.processJob(context.Background(), job)
+	}
+
+	logger.Debug("worker stopped")
 }
 
 // processJob processes a single job.

@@ -70,7 +70,7 @@ func TestRateLimit_Middleware(t *testing.T) {
 	logger := zap.NewNop()
 	rl := NewRateLimiter(2, time.Minute, logger)
 
-	handler := RateLimit(rl)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := RateLimit(rl, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 

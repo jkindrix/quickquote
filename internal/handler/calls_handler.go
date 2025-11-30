@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -54,7 +55,7 @@ func (h *CallsHandler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	calls, total, err := h.callService.ListCalls(r.Context(), 1, 10)
+	calls, total, err := h.callService.ListCalls(r.Context(), 1, 10, nil)
 	if err != nil {
 		h.logger.Error("failed to list calls", zap.Error(err))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -88,7 +89,13 @@ func (h *CallsHandler) HandleCallsList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	calls, total, err := h.callService.ListCalls(r.Context(), page, 20)
+	query := r.URL.Query()
+	statusParam := strings.TrimSpace(query.Get("status"))
+	searchParam := strings.TrimSpace(query.Get("q"))
+
+	filter := buildCallListFilter(statusParam, searchParam)
+
+	calls, total, err := h.callService.ListCalls(r.Context(), page, 20, filter)
 	if err != nil {
 		h.logger.Error("failed to list calls", zap.Error(err))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -109,6 +116,10 @@ func (h *CallsHandler) HandleCallsList(w http.ResponseWriter, r *http.Request) {
 		Page:       page,
 		PageSize:   pageSize,
 		TotalPages: totalPages,
+		Filter: CallListFilterView{
+			Status: statusParam,
+			Query:  searchParam,
+		},
 	})
 }
 
@@ -217,9 +228,36 @@ func countPendingQuotes(calls []*domain.Call) int {
 	return count
 }
 
-// writeJSON is a helper to write JSON responses (defined in base.go).
-func writeJSON(w http.ResponseWriter, data interface{}) error {
-	return encodeJSON(w, data)
+// CallListFilterView holds the UI filter state.
+type CallListFilterView struct {
+	Status string
+	Query  string
+}
+
+// buildCallListFilter creates a domain filter from UI inputs.
+func buildCallListFilter(status, search string) *domain.CallListFilter {
+	var filter domain.CallListFilter
+
+	if status != "" {
+		switch domain.CallStatus(status) {
+		case domain.CallStatusPending,
+			domain.CallStatusInProgress,
+			domain.CallStatusCompleted,
+			domain.CallStatusFailed,
+			domain.CallStatusNoAnswer:
+			statusValue := domain.CallStatus(status)
+			filter.Status = &statusValue
+		}
+	}
+
+	if strings.TrimSpace(search) != "" {
+		filter.Search = search
+	}
+
+	if filter.Status == nil && strings.TrimSpace(filter.Search) == "" {
+		return nil
+	}
+	return &filter
 }
 
 // CSRFMiddleware returns a CSRF validation middleware for the calls handler.

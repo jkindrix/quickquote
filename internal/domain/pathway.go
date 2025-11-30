@@ -26,8 +26,21 @@ type Pathway struct {
 	SyncError    string    `json:"sync_error,omitempty" db:"sync_error"`
 	IsPublished  bool      `json:"is_published" db:"is_published"`
 	PublishedAt  *time.Time `json:"published_at,omitempty" db:"published_at"`
-	CreatedAt    time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at" db:"updated_at"`
+	CreatedAt    time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at" db:"updated_at"`
+	DeletedAt    *time.Time `json:"deleted_at,omitempty" db:"deleted_at"`
+}
+
+// IsDeleted returns true if the pathway has been soft-deleted.
+func (p *Pathway) IsDeleted() bool {
+	return p.DeletedAt != nil
+}
+
+// MarkDeleted soft-deletes the pathway by setting DeletedAt.
+func (p *Pathway) MarkDeleted() {
+	now := time.Now().UTC()
+	p.DeletedAt = &now
+	p.UpdatedAt = now
 }
 
 // PathwayStatus constants.

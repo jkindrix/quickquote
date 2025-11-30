@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
-	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -14,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	apperrors "github.com/jkindrix/quickquote/internal/errors"
 	"github.com/jkindrix/quickquote/internal/repository"
 )
 
@@ -40,6 +40,8 @@ type CSRFProtection struct {
 	tokens map[string]time.Time // fallback in-memory store
 	repo   CSRFRepository       // optional persistent store
 	logger *zap.Logger
+	stopCh chan struct{}        // signal to stop cleanup goroutine
+	doneCh chan struct{}        // signal that cleanup has stopped
 }
 
 // NewCSRFProtection creates a new CSRF protection middleware (in-memory fallback).
@@ -47,6 +49,8 @@ func NewCSRFProtection(logger *zap.Logger) *CSRFProtection {
 	csrf := &CSRFProtection{
 		tokens: make(map[string]time.Time),
 		logger: logger,
+		stopCh: make(chan struct{}),
+		doneCh: make(chan struct{}),
 	}
 
 	// Start cleanup goroutine
@@ -61,6 +65,8 @@ func NewCSRFProtectionWithRepo(repo CSRFRepository, logger *zap.Logger) *CSRFPro
 		tokens: make(map[string]time.Time),
 		repo:   repo,
 		logger: logger,
+		stopCh: make(chan struct{}),
+		doneCh: make(chan struct{}),
 	}
 
 	// Start cleanup goroutine
@@ -69,29 +75,63 @@ func NewCSRFProtectionWithRepo(repo CSRFRepository, logger *zap.Logger) *CSRFPro
 	return csrf
 }
 
+// Shutdown gracefully stops the CSRF cleanup goroutine.
+// It waits for the cleanup goroutine to finish before returning.
+func (c *CSRFProtection) Shutdown(ctx context.Context) error {
+	close(c.stopCh)
+
+	select {
+	case <-c.doneCh:
+		c.logger.Debug("CSRF cleanup goroutine stopped")
+		return nil
+	case <-ctx.Done():
+		c.logger.Warn("CSRF shutdown timed out waiting for cleanup goroutine")
+		return ctx.Err()
+	}
+}
+
 // cleanup removes expired tokens periodically.
 func (c *CSRFProtection) cleanup() {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
+	defer close(c.doneCh)
 
-	for range ticker.C {
-		// Clean up in-memory tokens
-		c.mu.Lock()
-		now := time.Now()
-		for token, expiry := range c.tokens {
-			if now.After(expiry) {
-				delete(c.tokens, token)
-			}
+	for {
+		select {
+		case <-c.stopCh:
+			c.logger.Debug("CSRF cleanup goroutine received stop signal")
+			return
+		case <-ticker.C:
+			c.cleanupExpiredTokens()
 		}
-		c.mu.Unlock()
+	}
+}
 
-		// Clean up database tokens if repo is available
-		if c.repo != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			if err := c.repo.DeleteExpired(ctx); err != nil {
-				c.logger.Error("failed to delete expired CSRF tokens from database", zap.Error(err))
-			}
-			cancel()
+// cleanupExpiredTokens removes expired tokens from memory and database.
+func (c *CSRFProtection) cleanupExpiredTokens() {
+	// Clean up in-memory tokens
+	c.mu.Lock()
+	now := time.Now()
+	expiredCount := 0
+	for token, expiry := range c.tokens {
+		if now.After(expiry) {
+			delete(c.tokens, token)
+			expiredCount++
+		}
+	}
+	c.mu.Unlock()
+
+	if expiredCount > 0 {
+		c.logger.Debug("cleaned up expired in-memory CSRF tokens", zap.Int("count", expiredCount))
+	}
+
+	// Clean up database tokens if repo is available
+	if c.repo != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := c.repo.DeleteExpired(ctx); err != nil {
+			c.logger.Error("failed to delete expired CSRF tokens from database", zap.Error(err))
 		}
 	}
 }
@@ -157,7 +197,7 @@ func (c *CSRFProtection) ValidateTokenWithContext(ctx context.Context, token str
 		if err == nil {
 			return true
 		}
-		if !errors.Is(err, repository.ErrNotFound) {
+		if !apperrors.IsNotFound(err) {
 			c.logger.Error("failed to validate CSRF token from database", zap.Error(err))
 		}
 		// Fall through to check in-memory store
@@ -194,7 +234,7 @@ func (c *CSRFProtection) InvalidateTokenWithContext(ctx context.Context, token s
 		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
-		if err := c.repo.MarkUsed(dbCtx, token); err != nil && !errors.Is(err, repository.ErrNotFound) {
+		if err := c.repo.MarkUsed(dbCtx, token); err != nil && !apperrors.IsNotFound(err) {
 			c.logger.Error("failed to mark CSRF token as used", zap.Error(err))
 		}
 	}

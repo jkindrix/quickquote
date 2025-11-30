@@ -46,6 +46,15 @@ const (
 	EventServiceStarted  EventType = "system.started"
 	EventServiceStopping EventType = "system.stopping"
 	EventConfigChanged   EventType = "system.config.changed"
+
+	// Admin operations
+	EventAdminPromptCreated  EventType = "admin.prompt.created"
+	EventAdminPromptUpdated  EventType = "admin.prompt.updated"
+	EventAdminPromptDeleted  EventType = "admin.prompt.deleted"
+	EventAdminSettingChanged EventType = "admin.setting.changed"
+	EventAdminCallInitiated  EventType = "admin.call.initiated"
+	EventAdminCallEnded      EventType = "admin.call.ended"
+	EventAdminCallAnalyzed   EventType = "admin.call.analyzed"
 )
 
 // Severity represents the severity level of an audit event.
@@ -401,5 +410,144 @@ func (l *Logger) ServiceStopping(ctx context.Context, reason string) {
 		Action:    "service stopping",
 		Outcome:   "success",
 		Reason:    reason,
+	})
+}
+
+// Admin operation helpers
+
+// PromptCreated logs a prompt creation by an admin.
+func (l *Logger) PromptCreated(ctx context.Context, userID, userName, promptID, promptName, ip, requestID string) {
+	l.Log(ctx, &Event{
+		Type:         EventAdminPromptCreated,
+		Severity:     SeverityInfo,
+		ActorID:      userID,
+		ActorType:    "admin",
+		ActorName:    userName,
+		SourceIP:     ip,
+		RequestID:    requestID,
+		ResourceType: "prompt",
+		ResourceID:   promptID,
+		Action:       "prompt created",
+		Outcome:      "success",
+		Metadata: map[string]interface{}{
+			"prompt_name": promptName,
+		},
+	})
+}
+
+// PromptUpdated logs a prompt update by an admin.
+func (l *Logger) PromptUpdated(ctx context.Context, userID, userName, promptID, promptName, ip, requestID string, changes map[string]interface{}) {
+	l.Log(ctx, &Event{
+		Type:         EventAdminPromptUpdated,
+		Severity:     SeverityInfo,
+		ActorID:      userID,
+		ActorType:    "admin",
+		ActorName:    userName,
+		SourceIP:     ip,
+		RequestID:    requestID,
+		ResourceType: "prompt",
+		ResourceID:   promptID,
+		Action:       "prompt updated",
+		Outcome:      "success",
+		Metadata: map[string]interface{}{
+			"prompt_name": promptName,
+			"changes":     changes,
+		},
+	})
+}
+
+// PromptDeleted logs a prompt deletion by an admin.
+func (l *Logger) PromptDeleted(ctx context.Context, userID, userName, promptID, promptName, ip, requestID string) {
+	l.Log(ctx, &Event{
+		Type:         EventAdminPromptDeleted,
+		Severity:     SeverityWarning,
+		ActorID:      userID,
+		ActorType:    "admin",
+		ActorName:    userName,
+		SourceIP:     ip,
+		RequestID:    requestID,
+		ResourceType: "prompt",
+		ResourceID:   promptID,
+		Action:       "prompt deleted",
+		Outcome:      "success",
+		Metadata: map[string]interface{}{
+			"prompt_name": promptName,
+		},
+	})
+}
+
+// SettingChanged logs a setting change by an admin.
+func (l *Logger) SettingChanged(ctx context.Context, userID, userName, settingKey, ip, requestID string, oldValue, newValue interface{}) {
+	l.Log(ctx, &Event{
+		Type:         EventAdminSettingChanged,
+		Severity:     SeverityWarning,
+		ActorID:      userID,
+		ActorType:    "admin",
+		ActorName:    userName,
+		SourceIP:     ip,
+		RequestID:    requestID,
+		ResourceType: "setting",
+		ResourceID:   settingKey,
+		Action:       "setting changed",
+		Outcome:      "success",
+		Metadata: map[string]interface{}{
+			"key":       settingKey,
+			"old_value": oldValue,
+			"new_value": newValue,
+		},
+	})
+}
+
+// CallInitiated logs an outbound call initiation by an admin.
+func (l *Logger) CallInitiated(ctx context.Context, userID, userName, callID, phoneNumber, ip, requestID string) {
+	l.Log(ctx, &Event{
+		Type:         EventAdminCallInitiated,
+		Severity:     SeverityInfo,
+		ActorID:      userID,
+		ActorType:    "admin",
+		ActorName:    userName,
+		SourceIP:     ip,
+		RequestID:    requestID,
+		ResourceType: "call",
+		ResourceID:   callID,
+		Action:       "call initiated",
+		Outcome:      "success",
+		Metadata: map[string]interface{}{
+			"phone_number": phoneNumber,
+		},
+	})
+}
+
+// CallEnded logs a call termination by an admin.
+func (l *Logger) CallEnded(ctx context.Context, userID, userName, callID, ip, requestID string) {
+	l.Log(ctx, &Event{
+		Type:         EventAdminCallEnded,
+		Severity:     SeverityInfo,
+		ActorID:      userID,
+		ActorType:    "admin",
+		ActorName:    userName,
+		SourceIP:     ip,
+		RequestID:    requestID,
+		ResourceType: "call",
+		ResourceID:   callID,
+		Action:       "call ended",
+		Outcome:      "success",
+	})
+}
+
+// CallAnalyzed logs a call analysis request by an admin.
+func (l *Logger) CallAnalyzed(ctx context.Context, userID, userName, callID, ip, requestID string) {
+	l.Log(ctx, &Event{
+		Type:         EventAdminCallAnalyzed,
+		Severity:     SeverityInfo,
+		ActorID:      userID,
+		ActorType:    "admin",
+		ActorName:    userName,
+		SourceIP:     ip,
+		RequestID:    requestID,
+		ResourceType: "call",
+		ResourceID:   callID,
+		Action:       "call analyzed",
+		Outcome:      "success",
 	})
 }

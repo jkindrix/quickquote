@@ -9,11 +9,24 @@ import (
 
 // User represents a dashboard user.
 type User struct {
-	ID           uuid.UUID `json:"id"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"-"` // Never serialize password hash
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           uuid.UUID  `json:"id"`
+	Email        string     `json:"email"`
+	PasswordHash string     `json:"-"` // Never serialize password hash
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
+}
+
+// IsDeleted returns true if the user has been soft-deleted.
+func (u *User) IsDeleted() bool {
+	return u.DeletedAt != nil
+}
+
+// MarkDeleted soft-deletes the user by setting DeletedAt.
+func (u *User) MarkDeleted() {
+	now := time.Now().UTC()
+	u.DeletedAt = &now
+	u.UpdatedAt = now
 }
 
 // NewUser creates a new user with a hashed password.

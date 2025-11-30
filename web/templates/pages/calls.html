@@ -6,6 +6,28 @@
         <p>Showing {{len .Calls}} of {{.TotalCalls}} calls</p>
     </div>
 
+    <form class="filter-form" method="GET">
+        <div class="filter-group">
+            <label for="status">Status</label>
+            <select id="status" name="status">
+                <option value="" {{if eq .Filter.Status ""}}selected{{end}}>All</option>
+                <option value="pending" {{if eq .Filter.Status "pending"}}selected{{end}}>Pending</option>
+                <option value="in_progress" {{if eq .Filter.Status "in_progress"}}selected{{end}}>In Progress</option>
+                <option value="completed" {{if eq .Filter.Status "completed"}}selected{{end}}>Completed</option>
+                <option value="failed" {{if eq .Filter.Status "failed"}}selected{{end}}>Failed</option>
+                <option value="no_answer" {{if eq .Filter.Status "no_answer"}}selected{{end}}>No Answer</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="query">Search</label>
+            <input type="search" id="query" name="q" value="{{.Filter.Query}}" placeholder="Caller, phone, or provider ID">
+        </div>
+        <div class="filter-actions">
+            <button type="submit" class="btn btn-sm">Apply</button>
+            <a href="/calls" class="btn btn-sm btn-outline {{if and (eq .Filter.Status "") (eq .Filter.Query "")}}disabled{{end}}">Reset</a>
+        </div>
+    </form>
+
     <div class="card">
         <table class="table">
             <thead>
@@ -41,11 +63,11 @@
         {{if gt .TotalPages 1}}
         <div class="pagination">
             {{if gt .Page 1}}
-            <a href="/calls?page={{subtract .Page 1}}" class="btn btn-sm">Previous</a>
+            <a href="/calls?page={{subtract .Page 1}}{{if .Filter.Status}}&status={{.Filter.Status}}{{end}}{{if .Filter.Query}}&q={{urlquery .Filter.Query}}{{end}}" class="btn btn-sm">Previous</a>
             {{end}}
             <span class="page-info">Page {{.Page}} of {{.TotalPages}}</span>
             {{if lt .Page .TotalPages}}
-            <a href="/calls?page={{add .Page 1}}" class="btn btn-sm">Next</a>
+            <a href="/calls?page={{add .Page 1}}{{if .Filter.Status}}&status={{.Filter.Status}}{{end}}{{if .Filter.Query}}&q={{urlquery .Filter.Query}}{{end}}" class="btn btn-sm">Next</a>
             {{end}}
         </div>
         {{end}}

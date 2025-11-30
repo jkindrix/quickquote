@@ -9,7 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/jkindrix/quickquote/internal/domain"
-	"github.com/jkindrix/quickquote/internal/repository"
+	apperrors "github.com/jkindrix/quickquote/internal/errors"
 	"github.com/jkindrix/quickquote/internal/voiceprovider"
 )
 
@@ -18,7 +18,7 @@ func newTestCallService() (*CallService, *MockCallRepository, *MockQuoteGenerato
 	mockRepo := NewMockCallRepository()
 	mockQuoteGen := NewMockQuoteGenerator()
 	// Pass nil for job processor - tests use legacy async generation
-	service := NewCallService(mockRepo, mockQuoteGen, nil, logger)
+	service := NewCallService(mockRepo, mockQuoteGen, nil, logger, nil)
 	return service, mockRepo, mockQuoteGen
 }
 
@@ -337,8 +337,8 @@ func TestCallService_GetCall_NotFound(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for non-existent call, got nil")
 	}
-	if !errors.Is(err, repository.ErrNotFound) {
-		t.Errorf("expected ErrNotFound, got %v", err)
+	if !apperrors.IsNotFound(err) {
+		t.Errorf("expected not found error, got %v", err)
 	}
 }
 
@@ -352,7 +352,7 @@ func TestCallService_ListCalls(t *testing.T) {
 		mockRepo.Create(ctx, call)
 	}
 
-	calls, total, err := service.ListCalls(ctx, 1, 10)
+	calls, total, err := service.ListCalls(ctx, 1, 10, nil)
 	if err != nil {
 		t.Fatalf("ListCalls() error = %v", err)
 	}
@@ -362,6 +362,39 @@ func TestCallService_ListCalls(t *testing.T) {
 	}
 	if total != 5 {
 		t.Errorf("expected total 5, got %d", total)
+	}
+}
+
+func TestCallService_ListCalls_WithFilter(t *testing.T) {
+	service, mockRepo, _ := newTestCallService()
+	ctx := context.Background()
+
+	completed := domain.CallStatusCompleted
+
+	// Create calls with varying statuses and phone numbers
+	callA := domain.NewCall("provider-a", "bland", "+10000000000", "+19876543210")
+	callA.Status = domain.CallStatusCompleted
+	callB := domain.NewCall("provider-b", "bland", "+20000000000", "+19876543210")
+	callB.Status = domain.CallStatusFailed
+	name := "Alice"
+	callA.CallerName = &name
+
+	mockRepo.Create(ctx, callA)
+	mockRepo.Create(ctx, callB)
+
+	filter := &domain.CallListFilter{
+		Status: &completed,
+		Search: "Alice",
+	}
+	calls, total, err := service.ListCalls(ctx, 1, 10, filter)
+	if err != nil {
+		t.Fatalf("ListCalls() error = %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("expected total 1, got %d", total)
+	}
+	if len(calls) != 1 || calls[0].ID != callA.ID {
+		t.Fatalf("expected only matching call returned")
 	}
 }
 
@@ -376,7 +409,7 @@ func TestCallService_ListCalls_Pagination(t *testing.T) {
 	}
 
 	// Test page 1 with page size 10
-	calls, total, err := service.ListCalls(ctx, 1, 10)
+	calls, total, err := service.ListCalls(ctx, 1, 10, nil)
 	if err != nil {
 		t.Fatalf("ListCalls() error = %v", err)
 	}
@@ -394,7 +427,7 @@ func TestCallService_ListCalls_InvalidPage(t *testing.T) {
 	ctx := context.Background()
 
 	// Page 0 should be treated as page 1
-	calls, _, err := service.ListCalls(ctx, 0, 10)
+	calls, _, err := service.ListCalls(ctx, 0, 10, nil)
 	if err != nil {
 		t.Fatalf("ListCalls() error = %v", err)
 	}
@@ -412,7 +445,7 @@ func TestCallService_ListCalls_InvalidPageSize(t *testing.T) {
 	mockRepo.Create(ctx, call)
 
 	// Page size 0 should use default (20)
-	calls, _, err := service.ListCalls(ctx, 1, 0)
+	calls, _, err := service.ListCalls(ctx, 1, 0, nil)
 	if err != nil {
 		t.Fatalf("ListCalls() error = %v", err)
 	}
@@ -422,7 +455,7 @@ func TestCallService_ListCalls_InvalidPageSize(t *testing.T) {
 	}
 
 	// Page size > 100 should be capped at 20
-	calls, _, err = service.ListCalls(ctx, 1, 200)
+	calls, _, err = service.ListCalls(ctx, 1, 200, nil)
 	if err != nil {
 		t.Fatalf("ListCalls() error = %v", err)
 	}

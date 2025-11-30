@@ -3,12 +3,13 @@ package repository
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	apperrors "github.com/jkindrix/quickquote/internal/errors"
 )
 
 // CSRFToken represents a CSRF token in the database.
@@ -46,7 +47,7 @@ func (r *CSRFRepository) Create(ctx context.Context, token *CSRFToken) error {
 		token.Used,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to insert CSRF token: %w", err)
+		return apperrors.DatabaseError("CSRFRepository.Create", err)
 	}
 
 	return nil
@@ -70,9 +71,9 @@ func (r *CSRFRepository) GetByToken(ctx context.Context, token string) (*CSRFTok
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
+			return nil, apperrors.NotFound("csrf_token")
 		}
-		return nil, fmt.Errorf("failed to get CSRF token: %w", err)
+		return nil, apperrors.DatabaseError("CSRFRepository.GetByToken", err)
 	}
 
 	return csrfToken, nil
@@ -84,11 +85,11 @@ func (r *CSRFRepository) MarkUsed(ctx context.Context, token string) error {
 
 	result, err := r.pool.Exec(ctx, query, token)
 	if err != nil {
-		return fmt.Errorf("failed to mark CSRF token as used: %w", err)
+		return apperrors.DatabaseError("CSRFRepository.MarkUsed", err)
 	}
 
 	if result.RowsAffected() == 0 {
-		return ErrNotFound
+		return apperrors.NotFound("csrf_token")
 	}
 
 	return nil
@@ -100,7 +101,7 @@ func (r *CSRFRepository) Delete(ctx context.Context, token string) error {
 
 	_, err := r.pool.Exec(ctx, query, token)
 	if err != nil {
-		return fmt.Errorf("failed to delete CSRF token: %w", err)
+		return apperrors.DatabaseError("CSRFRepository.Delete", err)
 	}
 
 	return nil
@@ -112,7 +113,7 @@ func (r *CSRFRepository) DeleteBySessionID(ctx context.Context, sessionID uuid.U
 
 	_, err := r.pool.Exec(ctx, query, sessionID)
 	if err != nil {
-		return fmt.Errorf("failed to delete session CSRF tokens: %w", err)
+		return apperrors.DatabaseError("CSRFRepository.DeleteBySessionID", err)
 	}
 
 	return nil
@@ -124,7 +125,7 @@ func (r *CSRFRepository) DeleteExpired(ctx context.Context) error {
 
 	_, err := r.pool.Exec(ctx, query)
 	if err != nil {
-		return fmt.Errorf("failed to delete expired CSRF tokens: %w", err)
+		return apperrors.DatabaseError("CSRFRepository.DeleteExpired", err)
 	}
 
 	return nil
@@ -154,7 +155,7 @@ func (r *CSRFRepository) GetOrCreate(ctx context.Context, sessionID *uuid.UUID, 
 			return existing, nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("failed to query existing token: %w", err)
+			return nil, apperrors.DatabaseError("CSRFRepository.GetOrCreate", err)
 		}
 	}
 

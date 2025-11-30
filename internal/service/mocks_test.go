@@ -2,12 +2,13 @@ package service
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
 
 	"github.com/jkindrix/quickquote/internal/domain"
-	"github.com/jkindrix/quickquote/internal/repository"
+	apperrors "github.com/jkindrix/quickquote/internal/errors"
 )
 
 // MockCallRepository is a mock implementation of domain.CallRepository for testing.
@@ -17,20 +18,20 @@ type MockCallRepository struct {
 	byProviderID map[string]*domain.Call
 
 	// For tracking method calls
-	CreateCalls         int
-	UpdateCalls         int
-	GetByIDCalls        int
+	CreateCalls          int
+	UpdateCalls          int
+	GetByIDCalls         int
 	GetByProviderIDCalls int
-	ListCalls           int
-	CountCalls          int
+	ListCalls            int
+	CountCalls           int
 
 	// For injecting errors
-	CreateError         error
-	UpdateError         error
-	GetByIDError        error
+	CreateError          error
+	UpdateError          error
+	GetByIDError         error
 	GetByProviderIDError error
-	ListError           error
-	CountError          error
+	ListError            error
+	CountError           error
 }
 
 func NewMockCallRepository() *MockCallRepository {
@@ -62,7 +63,7 @@ func (m *MockCallRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain
 	if call, ok := m.calls[id]; ok {
 		return call, nil
 	}
-	return nil, repository.ErrNotFound
+	return nil, apperrors.NotFound("call")
 }
 
 func (m *MockCallRepository) GetByProviderCallID(ctx context.Context, providerCallID string) (*domain.Call, error) {
@@ -75,7 +76,7 @@ func (m *MockCallRepository) GetByProviderCallID(ctx context.Context, providerCa
 	if call, ok := m.byProviderID[providerCallID]; ok {
 		return call, nil
 	}
-	return nil, repository.ErrNotFound
+	return nil, apperrors.NotFound("call")
 }
 
 func (m *MockCallRepository) Update(ctx context.Context, call *domain.Call) error {
@@ -86,14 +87,14 @@ func (m *MockCallRepository) Update(ctx context.Context, call *domain.Call) erro
 		return m.UpdateError
 	}
 	if _, ok := m.calls[call.ID]; !ok {
-		return repository.ErrNotFound
+		return apperrors.NotFound("call")
 	}
 	m.calls[call.ID] = call
 	m.byProviderID[call.ProviderCallID] = call
 	return nil
 }
 
-func (m *MockCallRepository) List(ctx context.Context, limit, offset int) ([]*domain.Call, error) {
+func (m *MockCallRepository) List(ctx context.Context, filter *domain.CallListFilter, limit, offset int) ([]*domain.Call, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	m.ListCalls++
@@ -102,6 +103,20 @@ func (m *MockCallRepository) List(ctx context.Context, limit, offset int) ([]*do
 	}
 	var result []*domain.Call
 	for _, call := range m.calls {
+		if filter != nil && filter.Status != nil && call.Status != *filter.Status {
+			continue
+		}
+		if filter != nil && strings.TrimSpace(filter.Search) != "" {
+			search := strings.ToLower(strings.TrimSpace(filter.Search))
+			target := strings.ToLower(call.PhoneNumber + call.FromNumber + call.ProviderCallID)
+			name := ""
+			if call.CallerName != nil {
+				name = strings.ToLower(*call.CallerName)
+			}
+			if !strings.Contains(target, search) && !strings.Contains(name, search) {
+				continue
+			}
+		}
 		result = append(result, call)
 	}
 	// Apply pagination
@@ -115,33 +130,32 @@ func (m *MockCallRepository) List(ctx context.Context, limit, offset int) ([]*do
 	return result[offset:end], nil
 }
 
-func (m *MockCallRepository) Count(ctx context.Context) (int, error) {
+func (m *MockCallRepository) Count(ctx context.Context, filter *domain.CallListFilter) (int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	m.CountCalls++
 	if m.CountError != nil {
 		return 0, m.CountError
 	}
-	return len(m.calls), nil
-}
-
-func (m *MockCallRepository) ListByStatus(ctx context.Context, status domain.CallStatus, limit, offset int) ([]*domain.Call, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	var result []*domain.Call
+	count := 0
 	for _, call := range m.calls {
-		if call.Status == status {
-			result = append(result, call)
+		if filter != nil && filter.Status != nil && call.Status != *filter.Status {
+			continue
 		}
+		if filter != nil && strings.TrimSpace(filter.Search) != "" {
+			search := strings.ToLower(strings.TrimSpace(filter.Search))
+			target := strings.ToLower(call.PhoneNumber + call.FromNumber + call.ProviderCallID)
+			name := ""
+			if call.CallerName != nil {
+				name = strings.ToLower(*call.CallerName)
+			}
+			if !strings.Contains(target, search) && !strings.Contains(name, search) {
+				continue
+			}
+		}
+		count++
 	}
-	if offset >= len(result) {
-		return []*domain.Call{}, nil
-	}
-	end := offset + limit
-	if end > len(result) {
-		end = len(result)
-	}
-	return result[offset:end], nil
+	return count, nil
 }
 
 // MockQuoteGenerator is a mock implementation of QuoteGenerator for testing.
@@ -167,8 +181,8 @@ func (m *MockQuoteGenerator) GenerateQuote(ctx context.Context, transcript strin
 
 // MockUserRepository is a mock implementation of domain.UserRepository for testing.
 type MockUserRepository struct {
-	mu    sync.RWMutex
-	users map[uuid.UUID]*domain.User
+	mu      sync.RWMutex
+	users   map[uuid.UUID]*domain.User
 	byEmail map[string]*domain.User
 
 	CreateCalls     int
@@ -211,7 +225,7 @@ func (m *MockUserRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain
 	if user, ok := m.users[id]; ok {
 		return user, nil
 	}
-	return nil, repository.ErrNotFound
+	return nil, apperrors.NotFound("user")
 }
 
 func (m *MockUserRepository) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
@@ -224,7 +238,7 @@ func (m *MockUserRepository) GetByEmail(ctx context.Context, email string) (*dom
 	if user, ok := m.byEmail[email]; ok {
 		return user, nil
 	}
-	return nil, repository.ErrNotFound
+	return nil, apperrors.NotFound("user")
 }
 
 func (m *MockUserRepository) Update(ctx context.Context, user *domain.User) error {
@@ -235,7 +249,7 @@ func (m *MockUserRepository) Update(ctx context.Context, user *domain.User) erro
 		return m.UpdateError
 	}
 	if _, ok := m.users[user.ID]; !ok {
-		return repository.ErrNotFound
+		return apperrors.NotFound("user")
 	}
 	m.users[user.ID] = user
 	m.byEmail[user.Email] = user
@@ -298,7 +312,7 @@ func (m *MockSessionRepository) GetByToken(ctx context.Context, token string) (*
 	if session, ok := m.sessions[token]; ok {
 		return session, nil
 	}
-	return nil, repository.ErrNotFound
+	return nil, apperrors.NotFound("session")
 }
 
 func (m *MockSessionRepository) Update(ctx context.Context, session *domain.Session) error {

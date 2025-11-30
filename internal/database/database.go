@@ -14,13 +14,19 @@ import (
 
 // DB wraps the pgx connection pool with additional functionality.
 type DB struct {
-	Pool      *pgxpool.Pool
-	TxManager *TxManager
-	logger    *zap.Logger
+	Pool        *pgxpool.Pool
+	TxManager   *TxManager
+	QueryLogger *QueryLogger
+	logger      *zap.Logger
 }
 
 // New creates a new database connection pool.
 func New(ctx context.Context, cfg *config.DatabaseConfig, logger *zap.Logger) (*DB, error) {
+	return NewWithQueryLogger(ctx, cfg, nil, logger)
+}
+
+// NewWithQueryLogger creates a new database connection pool with optional query logging.
+func NewWithQueryLogger(ctx context.Context, cfg *config.DatabaseConfig, queryLoggerCfg *QueryLoggerConfig, logger *zap.Logger) (*DB, error) {
 	poolConfig, err := pgxpool.ParseConfig(cfg.ConnectionString())
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse database config: %w", err)
@@ -32,6 +38,18 @@ func New(ctx context.Context, cfg *config.DatabaseConfig, logger *zap.Logger) (*
 	poolConfig.MaxConnLifetime = cfg.ConnectionMaxLifetime
 	poolConfig.MaxConnIdleTime = 5 * time.Minute
 	poolConfig.HealthCheckPeriod = 1 * time.Minute
+
+	// Create query logger and attach to pool config
+	var queryLogger *QueryLogger
+	if queryLoggerCfg != nil {
+		queryLogger = NewQueryLogger(queryLoggerCfg, logger)
+		poolConfig.ConnConfig.Tracer = queryLogger
+		logger.Info("query logging enabled",
+			zap.Duration("slow_threshold", queryLoggerCfg.SlowQueryThreshold),
+			zap.Duration("very_slow_threshold", queryLoggerCfg.VerySlowQueryThreshold),
+			zap.Bool("log_all_queries", queryLoggerCfg.LogAllQueries),
+		)
+	}
 
 	// Create connection pool
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
@@ -53,8 +71,9 @@ func New(ctx context.Context, cfg *config.DatabaseConfig, logger *zap.Logger) (*
 	)
 
 	db := &DB{
-		Pool:   pool,
-		logger: logger,
+		Pool:        pool,
+		QueryLogger: queryLogger,
+		logger:      logger,
 	}
 	db.TxManager = NewTxManager(pool, logger)
 

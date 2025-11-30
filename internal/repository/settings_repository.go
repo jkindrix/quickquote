@@ -2,12 +2,12 @@ package repository
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/jkindrix/quickquote/internal/domain"
+	apperrors "github.com/jkindrix/quickquote/internal/errors"
 )
 
 // SettingsRepository implements domain.SettingsRepository using PostgreSQL.
@@ -37,7 +37,7 @@ func (r *SettingsRepository) Get(ctx context.Context, key string) (*domain.Setti
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to get setting %s: %w", key, err)
+		return nil, apperrors.DatabaseError("SettingsRepository.Get", err)
 	}
 
 	return &s, nil
@@ -54,7 +54,7 @@ func (r *SettingsRepository) GetByCategory(ctx context.Context, category string)
 
 	rows, err := r.db.Query(ctx, query, category)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query settings by category: %w", err)
+		return nil, apperrors.DatabaseError("SettingsRepository.GetByCategory", err)
 	}
 	defer rows.Close()
 
@@ -65,12 +65,16 @@ func (r *SettingsRepository) GetByCategory(ctx context.Context, category string)
 			&s.ID, &s.Key, &s.Value, &s.ValueType, &s.Category,
 			&s.Description, &s.CreatedAt, &s.UpdatedAt,
 		); err != nil {
-			return nil, fmt.Errorf("failed to scan setting: %w", err)
+			return nil, apperrors.DatabaseError("SettingsRepository.GetByCategory", err)
 		}
 		settings = append(settings, &s)
 	}
 
-	return settings, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, apperrors.DatabaseError("SettingsRepository.GetByCategory", err)
+	}
+
+	return settings, nil
 }
 
 // GetAll retrieves all settings.
@@ -83,7 +87,7 @@ func (r *SettingsRepository) GetAll(ctx context.Context) ([]*domain.Setting, err
 
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query all settings: %w", err)
+		return nil, apperrors.DatabaseError("SettingsRepository.GetAll", err)
 	}
 	defer rows.Close()
 
@@ -94,12 +98,16 @@ func (r *SettingsRepository) GetAll(ctx context.Context) ([]*domain.Setting, err
 			&s.ID, &s.Key, &s.Value, &s.ValueType, &s.Category,
 			&s.Description, &s.CreatedAt, &s.UpdatedAt,
 		); err != nil {
-			return nil, fmt.Errorf("failed to scan setting: %w", err)
+			return nil, apperrors.DatabaseError("SettingsRepository.GetAll", err)
 		}
 		settings = append(settings, &s)
 	}
 
-	return settings, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, apperrors.DatabaseError("SettingsRepository.GetAll", err)
+	}
+
+	return settings, nil
 }
 
 // Set updates or inserts a setting value.
@@ -111,11 +119,11 @@ func (r *SettingsRepository) Set(ctx context.Context, key, value string) error {
 
 	result, err := r.db.Exec(ctx, query, key, value)
 	if err != nil {
-		return fmt.Errorf("failed to update setting %s: %w", key, err)
+		return apperrors.DatabaseError("SettingsRepository.Set", err)
 	}
 
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("setting %s not found", key)
+		return apperrors.NotFound("setting")
 	}
 
 	return nil
@@ -125,7 +133,7 @@ func (r *SettingsRepository) Set(ctx context.Context, key, value string) error {
 func (r *SettingsRepository) SetMany(ctx context.Context, settings map[string]string) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return apperrors.DatabaseError("SettingsRepository.SetMany", err)
 	}
 	defer tx.Rollback(ctx)
 
@@ -134,12 +142,12 @@ func (r *SettingsRepository) SetMany(ctx context.Context, settings map[string]st
 	for key, value := range settings {
 		_, err := tx.Exec(ctx, query, key, value)
 		if err != nil {
-			return fmt.Errorf("failed to update setting %s: %w", key, err)
+			return apperrors.DatabaseError("SettingsRepository.SetMany", err)
 		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit settings: %w", err)
+		return apperrors.DatabaseError("SettingsRepository.SetMany", err)
 	}
 
 	return nil
@@ -151,7 +159,7 @@ func (r *SettingsRepository) Delete(ctx context.Context, key string) error {
 
 	_, err := r.db.Exec(ctx, query, key)
 	if err != nil {
-		return fmt.Errorf("failed to delete setting %s: %w", key, err)
+		return apperrors.DatabaseError("SettingsRepository.Delete", err)
 	}
 
 	return nil

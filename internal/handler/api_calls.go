@@ -8,19 +8,22 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/jkindrix/quickquote/internal/audit"
 	"github.com/jkindrix/quickquote/internal/service"
 )
 
 // CallAPIHandler handles call-related API endpoints.
 type CallAPIHandler struct {
 	blandService *service.BlandService
+	auditLogger  *audit.Logger
 	logger       *zap.Logger
 }
 
 // NewCallAPIHandler creates a new CallAPIHandler.
-func NewCallAPIHandler(blandService *service.BlandService, logger *zap.Logger) *CallAPIHandler {
+func NewCallAPIHandler(blandService *service.BlandService, auditLogger *audit.Logger, logger *zap.Logger) *CallAPIHandler {
 	return &CallAPIHandler{
 		blandService: blandService,
+		auditLogger:  auditLogger,
 		logger:       logger,
 	}
 }
@@ -110,6 +113,17 @@ func (h *CallAPIHandler) InitiateCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Audit log the call initiation
+	if h.auditLogger != nil {
+		user := GetUserFromContext(r.Context())
+		userID, userName := "", ""
+		if user != nil {
+			userID = user.ID.String()
+			userName = user.Email
+		}
+		h.auditLogger.CallInitiated(r.Context(), userID, userName, resp.CallID.String(), req.PhoneNumber, getClientIP(r), GetRequestIDFromContext(r.Context()))
+	}
+
 	h.respondJSON(w, http.StatusCreated, resp)
 }
 
@@ -161,6 +175,17 @@ func (h *CallAPIHandler) EndCall(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("failed to end call", zap.String("call_id", callID), zap.Error(err))
 		h.respondError(w, http.StatusInternalServerError, "failed to end call")
 		return
+	}
+
+	// Audit log the call termination
+	if h.auditLogger != nil {
+		user := GetUserFromContext(r.Context())
+		userID, userName := "", ""
+		if user != nil {
+			userID = user.ID.String()
+			userName = user.Email
+		}
+		h.auditLogger.CallEnded(r.Context(), userID, userName, callID, getClientIP(r), GetRequestIDFromContext(r.Context()))
 	}
 
 	h.respondJSON(w, http.StatusOK, map[string]string{
@@ -234,6 +259,17 @@ func (h *CallAPIHandler) AnalyzeCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Audit log the call analysis
+	if h.auditLogger != nil {
+		user := GetUserFromContext(r.Context())
+		userID, userName := "", ""
+		if user != nil {
+			userID = user.ID.String()
+			userName = user.Email
+		}
+		h.auditLogger.CallAnalyzed(r.Context(), userID, userName, callID, getClientIP(r), GetRequestIDFromContext(r.Context()))
+	}
+
 	h.respondJSON(w, http.StatusOK, analysis)
 }
 
@@ -263,14 +299,9 @@ type ErrorResponse struct {
 }
 
 func (h *CallAPIHandler) respondJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	JSON(w, status, data)
 }
 
 func (h *CallAPIHandler) respondError(w http.ResponseWriter, status int, message string) {
-	h.respondJSON(w, status, ErrorResponse{
-		Error:   http.StatusText(status),
-		Message: message,
-	})
+	APIError(w, status, message)
 }

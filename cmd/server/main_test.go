@@ -18,7 +18,7 @@ func TestInitLogger_Development(t *testing.T) {
 	// Set to non-production
 	os.Setenv("APP_ENV", "development")
 
-	logger, err := initLogger()
+	logger, level, err := initLogger()
 	if err != nil {
 		t.Fatalf("initLogger() error = %v", err)
 	}
@@ -26,6 +26,11 @@ func TestInitLogger_Development(t *testing.T) {
 
 	if logger == nil {
 		t.Fatal("expected non-nil logger")
+	}
+
+	// Development should start at debug level
+	if level.Level().String() != "debug" {
+		t.Errorf("expected debug level in development, got %s", level.Level().String())
 	}
 
 	// Development logger should be able to log debug messages
@@ -42,7 +47,7 @@ func TestInitLogger_Production(t *testing.T) {
 	// Set to production
 	os.Setenv("APP_ENV", "production")
 
-	logger, err := initLogger()
+	logger, level, err := initLogger()
 	if err != nil {
 		t.Fatalf("initLogger() error = %v", err)
 	}
@@ -50,6 +55,11 @@ func TestInitLogger_Production(t *testing.T) {
 
 	if logger == nil {
 		t.Fatal("expected non-nil logger")
+	}
+
+	// Production should start at info level
+	if level.Level().String() != "info" {
+		t.Errorf("expected info level in production, got %s", level.Level().String())
 	}
 
 	// Production logger should work
@@ -64,7 +74,7 @@ func TestInitLogger_EmptyEnv(t *testing.T) {
 	// Clear env
 	os.Unsetenv("APP_ENV")
 
-	logger, err := initLogger()
+	logger, level, err := initLogger()
 	if err != nil {
 		t.Fatalf("initLogger() error = %v", err)
 	}
@@ -72,6 +82,42 @@ func TestInitLogger_EmptyEnv(t *testing.T) {
 
 	if logger == nil {
 		t.Fatal("expected non-nil logger")
+	}
+
+	// Empty env should default to development (debug level)
+	if level.Level().String() != "debug" {
+		t.Errorf("expected debug level for empty env, got %s", level.Level().String())
+	}
+}
+
+func TestInitLogger_AtomicLevelAdjustment(t *testing.T) {
+	// Save original env
+	original := os.Getenv("APP_ENV")
+	defer os.Setenv("APP_ENV", original)
+
+	os.Setenv("APP_ENV", "development")
+
+	logger, level, err := initLogger()
+	if err != nil {
+		t.Fatalf("initLogger() error = %v", err)
+	}
+	defer func() { _ = logger.Sync() }()
+
+	// Verify we can change level at runtime
+	if level.Level().String() != "debug" {
+		t.Fatalf("expected initial level debug, got %s", level.Level().String())
+	}
+
+	// Change level to error
+	level.SetLevel(zap.ErrorLevel)
+	if level.Level().String() != "error" {
+		t.Errorf("expected level error after change, got %s", level.Level().String())
+	}
+
+	// Change level back to info
+	level.SetLevel(zap.InfoLevel)
+	if level.Level().String() != "info" {
+		t.Errorf("expected level info after change, got %s", level.Level().String())
 	}
 }
 

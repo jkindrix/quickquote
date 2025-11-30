@@ -11,7 +11,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/jkindrix/quickquote/internal/domain"
-	"github.com/jkindrix/quickquote/internal/repository"
+	apperrors "github.com/jkindrix/quickquote/internal/errors"
+	"github.com/jkindrix/quickquote/internal/metrics"
 	"github.com/jkindrix/quickquote/internal/voiceprovider"
 )
 
@@ -21,6 +22,7 @@ type CallService struct {
 	quoteGen     QuoteGenerator
 	jobProcessor *QuoteJobProcessor
 	logger       *zap.Logger
+	metrics      *metrics.Metrics
 }
 
 // QuoteGenerator defines the interface for generating quotes from transcripts.
@@ -34,12 +36,14 @@ func NewCallService(
 	quoteGen QuoteGenerator,
 	jobProcessor *QuoteJobProcessor,
 	logger *zap.Logger,
+	metrics *metrics.Metrics,
 ) *CallService {
 	return &CallService{
 		callRepo:     callRepo,
 		quoteGen:     quoteGen,
 		jobProcessor: jobProcessor,
 		logger:       logger,
+		metrics:      metrics,
 	}
 }
 
@@ -54,7 +58,7 @@ func (s *CallService) ProcessCallEvent(ctx context.Context, event *voiceprovider
 
 	// Check if call already exists
 	call, err := s.callRepo.GetByProviderCallID(ctx, event.ProviderCallID)
-	if err != nil && !errors.Is(err, repository.ErrNotFound) {
+	if err != nil && !apperrors.IsNotFound(err) {
 		return nil, fmt.Errorf("failed to check existing call: %w", err)
 	}
 
@@ -95,8 +99,10 @@ func (s *CallService) ProcessCallEvent(ctx context.Context, event *voiceprovider
 				// Don't fail the whole request, quote will need manual retry
 			}
 		} else {
-			// Fallback to synchronous generation if no job processor (for backwards compatibility)
-			go s.generateQuoteAsync(call.ID)
+			// Log warning - job processor should always be configured in production
+			s.logger.Warn("job processor not configured, quote generation skipped",
+				zap.String("call_id", call.ID.String()),
+			)
 		}
 	}
 
@@ -195,19 +201,6 @@ func (s *CallService) mapProviderStatus(status voiceprovider.CallStatus) domain.
 	}
 }
 
-// generateQuoteAsync generates a quote for a call in the background.
-func (s *CallService) generateQuoteAsync(callID uuid.UUID) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	if _, err := s.GenerateQuote(ctx, callID); err != nil {
-		s.logger.Error("failed to generate quote",
-			zap.String("call_id", callID.String()),
-			zap.Error(err),
-		)
-	}
-}
-
 // GenerateQuote generates a quote summary for a call.
 func (s *CallService) GenerateQuote(ctx context.Context, callID uuid.UUID) (*domain.Call, error) {
 	call, err := s.callRepo.GetByID(ctx, callID)
@@ -221,8 +214,12 @@ func (s *CallService) GenerateQuote(ctx context.Context, callID uuid.UUID) (*dom
 
 	s.logger.Info("generating quote", zap.String("call_id", callID.String()))
 
+	start := time.Now()
 	quote, err := s.quoteGen.GenerateQuote(ctx, *call.Transcript, call.ExtractedData)
 	if err != nil {
+		if s.metrics != nil {
+			s.metrics.RecordQuoteGeneration(false, time.Since(start))
+		}
 		return nil, fmt.Errorf("failed to generate quote: %w", err)
 	}
 
@@ -230,6 +227,10 @@ func (s *CallService) GenerateQuote(ctx context.Context, callID uuid.UUID) (*dom
 
 	if err := s.callRepo.Update(ctx, call); err != nil {
 		return nil, fmt.Errorf("failed to update call with quote: %w", err)
+	}
+
+	if s.metrics != nil {
+		s.metrics.RecordQuoteGeneration(true, time.Since(start))
 	}
 
 	s.logger.Info("quote generated successfully", zap.String("call_id", callID.String()))
@@ -242,8 +243,8 @@ func (s *CallService) GetCall(ctx context.Context, id uuid.UUID) (*domain.Call, 
 	return s.callRepo.GetByID(ctx, id)
 }
 
-// ListCalls retrieves calls with pagination.
-func (s *CallService) ListCalls(ctx context.Context, page, pageSize int) ([]*domain.Call, int, error) {
+// ListCalls retrieves calls with pagination and optional filters.
+func (s *CallService) ListCalls(ctx context.Context, page, pageSize int, filter *domain.CallListFilter) ([]*domain.Call, int, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -253,12 +254,12 @@ func (s *CallService) ListCalls(ctx context.Context, page, pageSize int) ([]*dom
 
 	offset := (page - 1) * pageSize
 
-	calls, err := s.callRepo.List(ctx, pageSize, offset)
+	calls, err := s.callRepo.List(ctx, filter, pageSize, offset)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	total, err := s.callRepo.Count(ctx)
+	total, err := s.callRepo.Count(ctx, filter)
 	if err != nil {
 		return nil, 0, err
 	}

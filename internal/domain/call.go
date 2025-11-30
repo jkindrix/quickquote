@@ -3,6 +3,7 @@ package domain
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,10 +23,10 @@ const (
 // Call represents a phone call record.
 type Call struct {
 	ID              uuid.UUID         `json:"id"`
-	ProviderCallID  string            `json:"provider_call_id"`  // ID from voice provider (Bland, Vapi, Retell, etc.)
-	Provider        string            `json:"provider"`          // Provider type: "bland", "vapi", "retell", etc.
-	PhoneNumber     string            `json:"phone_number"`      // Number that received the call (to)
-	FromNumber      string            `json:"from_number"`       // Caller's number
+	ProviderCallID  string            `json:"provider_call_id"` // ID from voice provider (Bland, Vapi, Retell, etc.)
+	Provider        string            `json:"provider"`         // Provider type: "bland", "vapi", "retell", etc.
+	PhoneNumber     string            `json:"phone_number"`     // Number that received the call (to)
+	FromNumber      string            `json:"from_number"`      // Caller's number
 	CallerName      *string           `json:"caller_name,omitempty"`
 	Status          CallStatus        `json:"status"`
 	StartedAt       *time.Time        `json:"started_at,omitempty"`
@@ -39,6 +40,19 @@ type Call struct {
 	ErrorMessage    *string           `json:"error_message,omitempty"`
 	CreatedAt       time.Time         `json:"created_at"`
 	UpdatedAt       time.Time         `json:"updated_at"`
+	DeletedAt       *time.Time        `json:"deleted_at,omitempty"`
+}
+
+// IsDeleted returns true if the call has been soft-deleted.
+func (c *Call) IsDeleted() bool {
+	return c.DeletedAt != nil
+}
+
+// MarkDeleted soft-deletes the call by setting DeletedAt.
+func (c *Call) MarkDeleted() {
+	now := time.Now().UTC()
+	c.DeletedAt = &now
+	c.UpdatedAt = now
 }
 
 // TranscriptEntry represents a single message in the call transcript.
@@ -103,4 +117,21 @@ func (c *Call) FormattedDuration() string {
 		return fmt.Sprintf("%ds", seconds)
 	}
 	return fmt.Sprintf("%dm %ds", minutes, seconds)
+}
+
+// CallListFilter defines optional filters for listing calls.
+type CallListFilter struct {
+	Status *CallStatus
+	Search string
+}
+
+// HasFilters returns true if any filter fields are set.
+func (f *CallListFilter) HasFilters() bool {
+	if f == nil {
+		return false
+	}
+	if f.Status != nil {
+		return true
+	}
+	return strings.TrimSpace(f.Search) != ""
 }

@@ -36,15 +36,18 @@ type ServerConfig struct {
 
 // DatabaseConfig holds PostgreSQL connection settings.
 type DatabaseConfig struct {
-	Host                  string
-	Port                  int
-	User                  string
-	Password              string
-	Name                  string
-	SSLMode               string
-	MaxConnections        int
-	MaxIdleConnections    int
-	ConnectionMaxLifetime time.Duration
+	Host                   string
+	Port                   int
+	User                   string
+	Password               string
+	Name                   string
+	SSLMode                string
+	MaxConnections         int
+	MaxIdleConnections     int
+	ConnectionMaxLifetime  time.Duration
+	SlowQueryThreshold     time.Duration
+	VerySlowQueryThreshold time.Duration
+	LogAllQueries          bool
 }
 
 // ConnectionString returns a PostgreSQL connection string.
@@ -205,15 +208,18 @@ func Load() (*Config, error) {
 			Environment: v.GetString("server.env"),
 		},
 		Database: DatabaseConfig{
-			Host:                  v.GetString("database.host"),
-			Port:                  v.GetInt("database.port"),
-			User:                  v.GetString("database.user"),
-			Password:              v.GetString("database.password"),
-			Name:                  v.GetString("database.name"),
-			SSLMode:               v.GetString("database.sslmode"),
-			MaxConnections:        v.GetInt("database.max_connections"),
-			MaxIdleConnections:    v.GetInt("database.max_idle_connections"),
-			ConnectionMaxLifetime: v.GetDuration("database.connection_max_lifetime"),
+			Host:                   v.GetString("database.host"),
+			Port:                   v.GetInt("database.port"),
+			User:                   v.GetString("database.user"),
+			Password:               v.GetString("database.password"),
+			Name:                   v.GetString("database.name"),
+			SSLMode:                v.GetString("database.sslmode"),
+			MaxConnections:         v.GetInt("database.max_connections"),
+			MaxIdleConnections:     v.GetInt("database.max_idle_connections"),
+			ConnectionMaxLifetime:  v.GetDuration("database.connection_max_lifetime"),
+			SlowQueryThreshold:     v.GetDuration("database.slow_query_threshold"),
+			VerySlowQueryThreshold: v.GetDuration("database.very_slow_query_threshold"),
+			LogAllQueries:          v.GetBool("database.log_all_queries"),
 		},
 		VoiceProvider: VoiceProviderConfig{
 			Primary: v.GetString("voice_provider.primary"),
@@ -320,6 +326,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("database.max_connections", 25)
 	v.SetDefault("database.max_idle_connections", 5)
 	v.SetDefault("database.connection_max_lifetime", "5m")
+	v.SetDefault("database.slow_query_threshold", "100ms")
+	v.SetDefault("database.very_slow_query_threshold", "500ms")
+	v.SetDefault("database.log_all_queries", false)
 
 	// Voice provider defaults
 	v.SetDefault("voice_provider.primary", "bland")
@@ -347,24 +356,27 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("rate_limit.requests", 100)
 	v.SetDefault("rate_limit.window", "1m")
 
-	// Call settings defaults (optimized for quote collection)
-	v.SetDefault("call.business_name", "QuickQuote")
-	v.SetDefault("call.voice", "maya")
+	// Call settings defaults - technical settings only
+	// Business-specific values (business_name, project_types, custom_greeting)
+	// should be configured via environment variables or config file
+	v.SetDefault("call.business_name", "") // MUST be set by user
+	v.SetDefault("call.voice", "maya")     // Technical default - commonly used voice
 	v.SetDefault("call.voice_stability", 0.75)
 	v.SetDefault("call.voice_similarity_boost", 0.80)
 	v.SetDefault("call.voice_style", 0.3)
 	v.SetDefault("call.voice_speaker_boost", true)
-	v.SetDefault("call.model", "enhanced")
-	v.SetDefault("call.language", "en-US")
+	v.SetDefault("call.model", "enhanced") // Technical default
+	v.SetDefault("call.language", "en-US") // Technical default
 	v.SetDefault("call.temperature", 0.6)
 	v.SetDefault("call.interruption_threshold", 100)
 	v.SetDefault("call.wait_for_greeting", true)
 	v.SetDefault("call.noise_cancellation", true)
-	v.SetDefault("call.background_track", "office")
-	v.SetDefault("call.max_duration_minutes", 15)
-	v.SetDefault("call.record", true)
-	v.SetDefault("call.quality_preset", "default")
-	v.SetDefault("call.project_types", "web_app,mobile_app,api,ecommerce,custom_software,integration")
+	v.SetDefault("call.background_track", "none")       // No default background track
+	v.SetDefault("call.max_duration_minutes", 15)       // Technical limit
+	v.SetDefault("call.record", true)                   // Default to recording for quotes
+	v.SetDefault("call.quality_preset", "default")      // Technical default
+	v.SetDefault("call.project_types", "")              // MUST be set by user
+	v.SetDefault("call.custom_greeting", "")            // MUST be set by user if needed
 }
 
 // Validate checks that all required configuration values are present.
@@ -404,6 +416,28 @@ func (c *Config) Validate() error {
 		missing = append(missing, "APP_PUBLIC_URL")
 	}
 
+	// In production, webhook secrets and business config are required
+	if c.IsProduction() {
+		// Webhook secrets required for security
+		if c.VoiceProvider.Bland.Enabled && c.VoiceProvider.Bland.WebhookSecret == "" {
+			missing = append(missing, "VOICE_PROVIDER_BLAND_WEBHOOK_SECRET (required in production)")
+		}
+		if c.VoiceProvider.Vapi.Enabled && c.VoiceProvider.Vapi.WebhookSecret == "" {
+			missing = append(missing, "VOICE_PROVIDER_VAPI_WEBHOOK_SECRET (required in production)")
+		}
+		if c.VoiceProvider.Retell.Enabled && c.VoiceProvider.Retell.WebhookSecret == "" {
+			missing = append(missing, "VOICE_PROVIDER_RETELL_WEBHOOK_SECRET (required in production)")
+		}
+		// Check legacy Bland config if used
+		if c.Bland.APIKey != "" && c.Bland.WebhookSecret == "" && c.VoiceProvider.Bland.WebhookSecret == "" {
+			missing = append(missing, "BLAND_WEBHOOK_SECRET (required in production)")
+		}
+		// Business-specific configuration required in production
+		if c.CallSettings.BusinessName == "" {
+			missing = append(missing, "CALL_BUSINESS_NAME (required in production)")
+		}
+	}
+
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
 	}
@@ -422,14 +456,21 @@ func (c *Config) IsProduction() bool {
 }
 
 // GetProjectTypes returns the project types as a slice.
+// Returns an empty slice if not configured - callers should check this.
 func (c *CallSettingsConfig) GetProjectTypes() []string {
 	if c.ProjectTypes == "" {
-		return []string{"web_app", "mobile_app", "api", "ecommerce", "custom_software", "integration"}
+		// Return empty slice - caller should handle this case
+		return []string{}
 	}
 	types := strings.Split(c.ProjectTypes, ",")
 	for i := range types {
 		types[i] = strings.TrimSpace(types[i])
 	}
 	return types
+}
+
+// HasProjectTypes returns true if project types are configured.
+func (c *CallSettingsConfig) HasProjectTypes() bool {
+	return c.ProjectTypes != ""
 }
 

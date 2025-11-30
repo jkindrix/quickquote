@@ -15,7 +15,7 @@ func newTestAuthService() (*AuthService, *MockUserRepository, *MockSessionReposi
 	logger := zap.NewNop()
 	mockUserRepo := NewMockUserRepository()
 	mockSessionRepo := NewMockSessionRepository()
-	service := NewAuthService(mockUserRepo, mockSessionRepo, 24*time.Hour, logger)
+	service := NewAuthService(mockUserRepo, mockSessionRepo, 24*time.Hour, logger, nil)
 	return service, mockUserRepo, mockSessionRepo
 }
 
@@ -146,7 +146,7 @@ func TestAuthService_ValidateSession_ExpiredSession(t *testing.T) {
 	logger := zap.NewNop()
 	mockUserRepo := NewMockUserRepository()
 	mockSessionRepo := NewMockSessionRepository()
-	service := NewAuthService(mockUserRepo, mockSessionRepo, -1*time.Hour, logger) // Already expired
+	service := NewAuthService(mockUserRepo, mockSessionRepo, -1*time.Hour, logger, nil) // Already expired
 
 	ctx := context.Background()
 

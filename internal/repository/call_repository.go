@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/jkindrix/quickquote/internal/domain"
+	apperrors "github.com/jkindrix/quickquote/internal/errors"
 )
 
 // CallRepository implements domain.CallRepository using PostgreSQL.
@@ -27,14 +29,17 @@ func NewCallRepository(pool *pgxpool.Pool) *CallRepository {
 
 // Create inserts a new call record.
 func (r *CallRepository) Create(ctx context.Context, call *domain.Call) error {
+	ctx, cancel := WithWriteTimeout(ctx)
+	defer cancel()
+
 	transcriptJSON, err := json.Marshal(call.TranscriptJSON)
 	if err != nil {
-		return fmt.Errorf("failed to marshal transcript: %w", err)
+		return apperrors.Wrap(err, "CallRepository.Create", apperrors.CodeInternal, "failed to marshal transcript")
 	}
 
 	extractedDataJSON, err := json.Marshal(call.ExtractedData)
 	if err != nil {
-		return fmt.Errorf("failed to marshal extracted data: %w", err)
+		return apperrors.Wrap(err, "CallRepository.Create", apperrors.CodeInternal, "failed to marshal extracted data")
 	}
 
 	query := `
@@ -68,52 +73,61 @@ func (r *CallRepository) Create(ctx context.Context, call *domain.Call) error {
 		call.UpdatedAt,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to insert call: %w", err)
+		return apperrors.DatabaseError("CallRepository.Create", err)
 	}
 
 	return nil
 }
 
-// GetByID retrieves a call by its internal ID.
+// GetByID retrieves a call by its internal ID (excludes soft-deleted calls).
 func (r *CallRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Call, error) {
+	ctx, cancel := WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 		SELECT
 			id, provider_call_id, provider, phone_number, from_number, caller_name,
 			status, started_at, ended_at, duration_seconds, transcript,
 			transcript_json, recording_url, quote_summary, extracted_data,
-			error_message, created_at, updated_at
+			error_message, created_at, updated_at, deleted_at
 		FROM calls
-		WHERE id = $1`
+		WHERE id = $1 AND deleted_at IS NULL`
 
 	return r.scanCall(ctx, query, id)
 }
 
-// GetByProviderCallID retrieves a call by the voice provider's call ID.
+// GetByProviderCallID retrieves a call by the voice provider's call ID (excludes soft-deleted calls).
 func (r *CallRepository) GetByProviderCallID(ctx context.Context, providerCallID string) (*domain.Call, error) {
+	ctx, cancel := WithQueryTimeout(ctx)
+	defer cancel()
+
 	query := `
 		SELECT
 			id, provider_call_id, provider, phone_number, from_number, caller_name,
 			status, started_at, ended_at, duration_seconds, transcript,
 			transcript_json, recording_url, quote_summary, extracted_data,
-			error_message, created_at, updated_at
+			error_message, created_at, updated_at, deleted_at
 		FROM calls
-		WHERE provider_call_id = $1`
+		WHERE provider_call_id = $1 AND deleted_at IS NULL`
 
 	return r.scanCall(ctx, query, providerCallID)
 }
 
-// Update updates an existing call record.
+// Update updates an existing call record (excludes soft-deleted calls).
 func (r *CallRepository) Update(ctx context.Context, call *domain.Call) error {
+	ctx, cancel := WithWriteTimeout(ctx)
+	defer cancel()
+
 	call.UpdatedAt = time.Now().UTC()
 
 	transcriptJSON, err := json.Marshal(call.TranscriptJSON)
 	if err != nil {
-		return fmt.Errorf("failed to marshal transcript: %w", err)
+		return apperrors.Wrap(err, "CallRepository.Update", apperrors.CodeInternal, "failed to marshal transcript")
 	}
 
 	extractedDataJSON, err := json.Marshal(call.ExtractedData)
 	if err != nil {
-		return fmt.Errorf("failed to marshal extracted data: %w", err)
+		return apperrors.Wrap(err, "CallRepository.Update", apperrors.CodeInternal, "failed to marshal extracted data")
 	}
 
 	query := `
@@ -132,8 +146,9 @@ func (r *CallRepository) Update(ctx context.Context, call *domain.Call) error {
 			quote_summary = $13,
 			extracted_data = $14,
 			error_message = $15,
-			updated_at = $16
-		WHERE id = $1`
+			updated_at = $16,
+			deleted_at = $17
+		WHERE id = $1 AND deleted_at IS NULL`
 
 	result, err := r.pool.Exec(ctx, query,
 		call.ID,
@@ -152,57 +167,83 @@ func (r *CallRepository) Update(ctx context.Context, call *domain.Call) error {
 		extractedDataJSON,
 		call.ErrorMessage,
 		call.UpdatedAt,
+		call.DeletedAt,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to update call: %w", err)
+		return apperrors.DatabaseError("CallRepository.Update", err)
 	}
 
 	if result.RowsAffected() == 0 {
-		return ErrNotFound
+		return apperrors.NotFound("call")
 	}
 
 	return nil
 }
 
-// List retrieves calls with pagination, ordered by creation time descending.
-func (r *CallRepository) List(ctx context.Context, limit, offset int) ([]*domain.Call, error) {
+// Delete soft-deletes a call by setting deleted_at.
+func (r *CallRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	ctx, cancel := WithWriteTimeout(ctx)
+	defer cancel()
+
+	now := time.Now().UTC()
 	query := `
+		UPDATE calls SET
+			deleted_at = $2,
+			updated_at = $2
+		WHERE id = $1 AND deleted_at IS NULL`
+
+	result, err := r.pool.Exec(ctx, query, id, now)
+	if err != nil {
+		return apperrors.DatabaseError("CallRepository.Delete", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return apperrors.NotFound("call")
+	}
+
+	return nil
+}
+
+// List retrieves calls with pagination, ordered by creation time descending (excludes soft-deleted).
+func (r *CallRepository) List(ctx context.Context, filter *domain.CallListFilter, limit, offset int) ([]*domain.Call, error) {
+	ctx, cancel := WithListQueryTimeout(ctx)
+	defer cancel()
+
+	baseQuery := `
 		SELECT
 			id, provider_call_id, provider, phone_number, from_number, caller_name,
 			status, started_at, ended_at, duration_seconds, transcript,
 			transcript_json, recording_url, quote_summary, extracted_data,
-			error_message, created_at, updated_at
-		FROM calls
-		ORDER BY created_at DESC
-		LIMIT $1 OFFSET $2`
+			error_message, created_at, updated_at, deleted_at
+		FROM calls`
 
-	return r.scanCalls(ctx, query, limit, offset)
+	whereClause, args := buildCallFilter(filter)
+	paramIndex := len(args) + 1
+
+	query := fmt.Sprintf(`%s %s
+		ORDER BY created_at DESC
+		LIMIT $%d OFFSET $%d`, baseQuery, whereClause, paramIndex, paramIndex+1)
+
+	args = append(args, limit, offset)
+
+	return r.scanCalls(ctx, query, args...)
 }
 
-// Count returns the total number of calls.
-func (r *CallRepository) Count(ctx context.Context) (int, error) {
+// Count returns the total number of active (non-deleted) calls.
+func (r *CallRepository) Count(ctx context.Context, filter *domain.CallListFilter) (int, error) {
+	ctx, cancel := WithQueryTimeout(ctx)
+	defer cancel()
+
+	whereClause, args := buildCallFilter(filter)
+
+	query := fmt.Sprintf(`SELECT COUNT(*) FROM calls %s`, whereClause)
+
 	var count int
-	err := r.pool.QueryRow(ctx, "SELECT COUNT(*) FROM calls").Scan(&count)
+	err := r.pool.QueryRow(ctx, query, args...).Scan(&count)
 	if err != nil {
-		return 0, fmt.Errorf("failed to count calls: %w", err)
+		return 0, apperrors.DatabaseError("CallRepository.Count", err)
 	}
 	return count, nil
-}
-
-// ListByStatus retrieves calls filtered by status.
-func (r *CallRepository) ListByStatus(ctx context.Context, status domain.CallStatus, limit, offset int) ([]*domain.Call, error) {
-	query := `
-		SELECT
-			id, provider_call_id, provider, phone_number, from_number, caller_name,
-			status, started_at, ended_at, duration_seconds, transcript,
-			transcript_json, recording_url, quote_summary, extracted_data,
-			error_message, created_at, updated_at
-		FROM calls
-		WHERE status = $1
-		ORDER BY created_at DESC
-		LIMIT $2 OFFSET $3`
-
-	return r.scanCalls(ctx, query, status, limit, offset)
 }
 
 // scanCall scans a single call from a query.
@@ -229,24 +270,25 @@ func (r *CallRepository) scanCall(ctx context.Context, query string, args ...int
 		&call.ErrorMessage,
 		&call.CreatedAt,
 		&call.UpdatedAt,
+		&call.DeletedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
+			return nil, apperrors.NotFound("call")
 		}
-		return nil, fmt.Errorf("failed to scan call: %w", err)
+		return nil, apperrors.DatabaseError("CallRepository.scanCall", err)
 	}
 
 	if len(transcriptJSON) > 0 {
 		if err := json.Unmarshal(transcriptJSON, &call.TranscriptJSON); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal transcript: %w", err)
+			return nil, apperrors.Wrap(err, "CallRepository.scanCall", apperrors.CodeInternal, "failed to unmarshal transcript")
 		}
 	}
 
 	if len(extractedDataJSON) > 0 {
 		call.ExtractedData = &domain.ExtractedData{}
 		if err := json.Unmarshal(extractedDataJSON, call.ExtractedData); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal extracted data: %w", err)
+			return nil, apperrors.Wrap(err, "CallRepository.scanCall", apperrors.CodeInternal, "failed to unmarshal extracted data")
 		}
 	}
 
@@ -257,7 +299,7 @@ func (r *CallRepository) scanCall(ctx context.Context, query string, args ...int
 func (r *CallRepository) scanCalls(ctx context.Context, query string, args ...interface{}) ([]*domain.Call, error) {
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query calls: %w", err)
+		return nil, apperrors.DatabaseError("CallRepository.scanCalls", err)
 	}
 	defer rows.Close()
 
@@ -285,21 +327,22 @@ func (r *CallRepository) scanCalls(ctx context.Context, query string, args ...in
 			&call.ErrorMessage,
 			&call.CreatedAt,
 			&call.UpdatedAt,
+			&call.DeletedAt,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan call row: %w", err)
+			return nil, apperrors.DatabaseError("CallRepository.scanCalls", err)
 		}
 
 		if len(transcriptJSON) > 0 {
 			if err := json.Unmarshal(transcriptJSON, &call.TranscriptJSON); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal transcript: %w", err)
+				return nil, apperrors.Wrap(err, "CallRepository.scanCalls", apperrors.CodeInternal, "failed to unmarshal transcript")
 			}
 		}
 
 		if len(extractedDataJSON) > 0 {
 			call.ExtractedData = &domain.ExtractedData{}
 			if err := json.Unmarshal(extractedDataJSON, call.ExtractedData); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal extracted data: %w", err)
+				return nil, apperrors.Wrap(err, "CallRepository.scanCalls", apperrors.CodeInternal, "failed to unmarshal extracted data")
 			}
 		}
 
@@ -307,8 +350,30 @@ func (r *CallRepository) scanCalls(ctx context.Context, query string, args ...in
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating call rows: %w", err)
+		return nil, apperrors.DatabaseError("CallRepository.scanCalls", err)
 	}
 
 	return calls, nil
+}
+
+// buildCallFilter builds the WHERE clause and arguments for call listing/counting.
+func buildCallFilter(filter *domain.CallListFilter) (string, []interface{}) {
+	conditions := []string{"deleted_at IS NULL"}
+	args := make([]interface{}, 0, 2)
+	paramIndex := 1
+
+	if filter != nil {
+		if filter.Status != nil {
+			conditions = append(conditions, fmt.Sprintf("status = $%d", paramIndex))
+			args = append(args, *filter.Status)
+			paramIndex++
+		}
+		if search := strings.TrimSpace(filter.Search); search != "" {
+			conditions = append(conditions, fmt.Sprintf("(COALESCE(caller_name, '') ILIKE $%d OR phone_number ILIKE $%d OR from_number ILIKE $%d OR provider_call_id ILIKE $%d)", paramIndex, paramIndex, paramIndex, paramIndex))
+			args = append(args, "%"+search+"%")
+			paramIndex++
+		}
+	}
+
+	return "WHERE " + strings.Join(conditions, " AND "), args
 }

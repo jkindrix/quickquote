@@ -4,14 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"time"
 
 	"go.uber.org/zap"
 
 	"github.com/jkindrix/quickquote/internal/domain"
-	"github.com/jkindrix/quickquote/internal/repository"
+	apperrors "github.com/jkindrix/quickquote/internal/errors"
+	"github.com/jkindrix/quickquote/internal/metrics"
 )
 
 // tokenLength is the length of session tokens in bytes.
@@ -19,10 +19,11 @@ const tokenLength = 32
 
 // AuthService handles authentication-related business logic.
 type AuthService struct {
-	userRepo       domain.UserRepository
-	sessionRepo    domain.SessionRepository
+	userRepo        domain.UserRepository
+	sessionRepo     domain.SessionRepository
 	sessionDuration time.Duration
-	logger         *zap.Logger
+	logger          *zap.Logger
+	metrics         *metrics.Metrics
 }
 
 // AuthError represents an authentication error.
@@ -47,12 +48,14 @@ func NewAuthService(
 	sessionRepo domain.SessionRepository,
 	sessionDuration time.Duration,
 	logger *zap.Logger,
+	metrics *metrics.Metrics,
 ) *AuthService {
 	return &AuthService{
 		userRepo:        userRepo,
 		sessionRepo:     sessionRepo,
 		sessionDuration: sessionDuration,
 		logger:          logger,
+		metrics:         metrics,
 	}
 }
 
@@ -71,7 +74,7 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*domai
 func (s *AuthService) LoginWithContext(ctx context.Context, email, password string, loginCtx *LoginContext) (*domain.Session, error) {
 	user, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
+		if apperrors.IsNotFound(err) {
 			s.logger.Warn("login attempt for non-existent user", zap.String("email", email))
 			return nil, ErrInvalidCredentials
 		}
@@ -137,7 +140,7 @@ func (s *AuthService) ValidateSession(ctx context.Context, token string) (*domai
 func (s *AuthService) ValidateAndRefreshSession(ctx context.Context, token string) (*SessionValidationResult, error) {
 	session, err := s.sessionRepo.GetByToken(ctx, token)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
+		if apperrors.IsNotFound(err) {
 			return nil, ErrSessionExpired
 		}
 		return nil, fmt.Errorf("failed to get session: %w", err)
@@ -146,6 +149,9 @@ func (s *AuthService) ValidateAndRefreshSession(ctx context.Context, token strin
 	if session.IsExpired() {
 		// Clean up expired session
 		_ = s.sessionRepo.Delete(ctx, token)
+		if s.metrics != nil {
+			s.metrics.RecordSessionExpired()
+		}
 		return nil, ErrSessionExpired
 	}
 
@@ -154,7 +160,7 @@ func (s *AuthService) ValidateAndRefreshSession(ctx context.Context, token strin
 
 	user, err := s.userRepo.GetByID(ctx, session.UserID)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
+		if apperrors.IsNotFound(err) {
 			return nil, ErrUserNotFound
 		}
 		return nil, fmt.Errorf("failed to get user: %w", err)
@@ -211,11 +217,11 @@ func (s *AuthService) ValidateAndRefreshSession(ctx context.Context, token strin
 func (s *AuthService) CreateUser(ctx context.Context, email, password string) (*domain.User, error) {
 	// Check if user already exists
 	existing, err := s.userRepo.GetByEmail(ctx, email)
-	if err != nil && !errors.Is(err, repository.ErrNotFound) {
+	if err != nil && !apperrors.IsNotFound(err) {
 		return nil, fmt.Errorf("failed to check existing user: %w", err)
 	}
 	if existing != nil {
-		return nil, errors.New("user with this email already exists")
+		return nil, apperrors.New(apperrors.CodeAlreadyExists, "user with this email already exists")
 	}
 
 	user, err := domain.NewUser(email, password)
@@ -258,7 +264,7 @@ func (s *AuthService) EnsureAdminUser(ctx context.Context, email, password strin
 
 	// Validate credentials
 	if email == "" || password == "" {
-		return false, errors.New("admin email and password required for initial setup")
+		return false, apperrors.ValidationFailed("admin email and password required for initial setup")
 	}
 
 	// Create admin user

@@ -428,3 +428,139 @@ func TestSanitizePhoneNumber(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultPaginationConfig(t *testing.T) {
+	cfg := DefaultPaginationConfig()
+
+	if cfg.MaxLimit != 1000 {
+		t.Errorf("expected MaxLimit = 1000, got %d", cfg.MaxLimit)
+	}
+	if cfg.DefaultLimit != 20 {
+		t.Errorf("expected DefaultLimit = 20, got %d", cfg.DefaultLimit)
+	}
+	if cfg.MaxOffset != 100000 {
+		t.Errorf("expected MaxOffset = 100000, got %d", cfg.MaxOffset)
+	}
+}
+
+func TestValidatePagination(t *testing.T) {
+	tests := []struct {
+		name      string
+		limit     int
+		offset    int
+		wantErr   bool
+		wantLimit int
+	}{
+		{"valid params", 10, 0, false, 10},
+		{"zero limit uses default", 0, 0, false, 20},
+		{"negative limit uses default", -5, 0, false, 20},
+		{"max limit ok", 1000, 0, false, 1000},
+		{"over max limit", 1001, 0, true, 0},
+		{"negative offset", 10, -1, true, 0},
+		{"max offset ok", 10, 100000, false, 10},
+		{"over max offset", 10, 100001, true, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ValidatePaginationWithDefaults(tt.limit, tt.offset)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidatePagination() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && result.Limit != tt.wantLimit {
+				t.Errorf("ValidatePagination() limit = %d, want %d", result.Limit, tt.wantLimit)
+			}
+		})
+	}
+}
+
+func TestNormalizePaginationParams(t *testing.T) {
+	tests := []struct {
+		name       string
+		limit      int
+		offset     int
+		wantLimit  int
+		wantOffset int
+	}{
+		{"valid params", 10, 5, 10, 5},
+		{"zero limit clamped", 0, 0, 20, 0},
+		{"negative limit clamped", -5, 0, 20, 0},
+		{"over max limit clamped", 2000, 0, 1000, 0},
+		{"negative offset clamped", 10, -1, 10, 0},
+		{"over max offset clamped", 10, 200000, 10, 100000},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := NormalizePaginationParams(tt.limit, tt.offset, nil)
+			if result.Limit != tt.wantLimit {
+				t.Errorf("NormalizePaginationParams() limit = %d, want %d", result.Limit, tt.wantLimit)
+			}
+			if result.Offset != tt.wantOffset {
+				t.Errorf("NormalizePaginationParams() offset = %d, want %d", result.Offset, tt.wantOffset)
+			}
+		})
+	}
+}
+
+func TestPaginationValidator(t *testing.T) {
+	// Test valid pagination
+	v := NewPaginationValidator(nil)
+	if !v.Validate(10, 0) {
+		t.Errorf("expected valid pagination, got errors: %v", v.Errors())
+	}
+
+	// Test invalid limit
+	v2 := NewPaginationValidator(nil)
+	if v2.Validate(2000, 0) {
+		t.Error("expected invalid for over-limit")
+	}
+	if len(v2.Errors()) != 1 || v2.Errors()[0].Field != "limit" {
+		t.Errorf("expected limit error, got: %v", v2.Errors())
+	}
+
+	// Test invalid offset
+	v3 := NewPaginationValidator(nil)
+	if v3.Validate(10, -1) {
+		t.Error("expected invalid for negative offset")
+	}
+	if len(v3.Errors()) != 1 || v3.Errors()[0].Field != "offset" {
+		t.Errorf("expected offset error, got: %v", v3.Errors())
+	}
+
+	// Test both invalid
+	v4 := NewPaginationValidator(nil)
+	if v4.Validate(2000, -1) {
+		t.Error("expected invalid for both")
+	}
+	if len(v4.Errors()) != 2 {
+		t.Errorf("expected 2 errors, got: %v", v4.Errors())
+	}
+}
+
+func TestPaginationValidator_CustomConfig(t *testing.T) {
+	cfg := &PaginationConfig{
+		MaxLimit:     50,
+		DefaultLimit: 10,
+		MaxOffset:    500,
+	}
+
+	v := NewPaginationValidator(cfg)
+
+	// Test within custom limits
+	if !v.Validate(50, 500) {
+		t.Errorf("expected valid with custom config, got errors: %v", v.Errors())
+	}
+
+	// Test exceeding custom limits
+	v2 := NewPaginationValidator(cfg)
+	if v2.Validate(51, 0) {
+		t.Error("expected invalid for over custom max limit")
+	}
+
+	v3 := NewPaginationValidator(cfg)
+	if v3.Validate(10, 501) {
+		t.Error("expected invalid for over custom max offset")
+	}
+}

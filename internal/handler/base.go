@@ -4,6 +4,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"go.uber.org/zap"
@@ -121,7 +122,7 @@ func (b *BaseHandler) WriteJSON(w http.ResponseWriter, r *http.Request, status i
 
 	w.WriteHeader(status)
 	if data != nil {
-		if err := writeJSON(w, data); err != nil {
+		if err := encodeJSON(w, data); err != nil {
 			b.logger.Debug("failed to write JSON response", zap.Error(err))
 		}
 	}
@@ -139,4 +140,130 @@ func (b *BaseHandler) WriteError(w http.ResponseWriter, r *http.Request, status 
 // helper to write JSON
 func encodeJSON(w http.ResponseWriter, data interface{}) error {
 	return json.NewEncoder(w).Encode(data)
+}
+
+// JSON writes a JSON response with the appropriate headers.
+// This is a package-level helper for handlers that don't embed BaseHandler.
+func JSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if data != nil {
+		json.NewEncoder(w).Encode(data)
+	}
+}
+
+// JSONWithRequest writes a JSON response, including request ID in headers.
+// This is the preferred method when the request is available.
+func JSONWithRequest(w http.ResponseWriter, r *http.Request, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	if reqID := GetRequestIDFromContext(r.Context()); reqID != "" {
+		w.Header().Set("X-Request-ID", reqID)
+	}
+	w.WriteHeader(status)
+	if data != nil {
+		json.NewEncoder(w).Encode(data)
+	}
+}
+
+// APIError writes an API error response in a consistent format.
+// This is a package-level helper for handlers that don't embed BaseHandler.
+func APIError(w http.ResponseWriter, status int, message string) {
+	JSON(w, status, ErrorResponse{
+		Error:   http.StatusText(status),
+		Message: message,
+	})
+}
+
+// APIErrorWithRequest writes an API error response, including request context.
+// This is the preferred method when the request is available.
+func APIErrorWithRequest(w http.ResponseWriter, r *http.Request, status int, message string) {
+	JSONWithRequest(w, r, status, map[string]interface{}{
+		"error":      http.StatusText(status),
+		"message":    message,
+		"status":     status,
+		"request_id": GetRequestIDFromContext(r.Context()),
+	})
+}
+
+// ValidationFieldError represents a single field validation error.
+type ValidationFieldError struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
+	Code    string `json:"code,omitempty"`
+}
+
+// ValidationErrorResponse represents a structured validation error response.
+type ValidationErrorResponse struct {
+	Error   string                 `json:"error"`
+	Message string                 `json:"message"`
+	Status  int                    `json:"status"`
+	Errors  []ValidationFieldError `json:"errors"`
+}
+
+// APIValidationError writes a validation error response with field-level details.
+func APIValidationError(w http.ResponseWriter, errors []ValidationFieldError) {
+	resp := ValidationErrorResponse{
+		Error:   "Bad Request",
+		Message: "Validation failed",
+		Status:  http.StatusBadRequest,
+		Errors:  errors,
+	}
+	JSON(w, http.StatusBadRequest, resp)
+}
+
+// APIValidationErrorWithRequest writes a validation error response with request context.
+func APIValidationErrorWithRequest(w http.ResponseWriter, r *http.Request, errors []ValidationFieldError) {
+	resp := map[string]interface{}{
+		"error":      "Bad Request",
+		"message":    "Validation failed",
+		"status":     http.StatusBadRequest,
+		"errors":     errors,
+		"request_id": GetRequestIDFromContext(r.Context()),
+	}
+	JSONWithRequest(w, r, http.StatusBadRequest, resp)
+}
+
+// NewValidationError creates a single field validation error.
+func NewValidationError(field, message, code string) ValidationFieldError {
+	return ValidationFieldError{
+		Field:   field,
+		Message: message,
+		Code:    code,
+	}
+}
+
+// RequiredFieldError creates a validation error for a required field.
+func RequiredFieldError(field string) ValidationFieldError {
+	return ValidationFieldError{
+		Field:   field,
+		Message: "is required",
+		Code:    "required",
+	}
+}
+
+// InvalidFormatError creates a validation error for invalid format.
+func InvalidFormatError(field, expectedFormat string) ValidationFieldError {
+	return ValidationFieldError{
+		Field:   field,
+		Message: "must be " + expectedFormat,
+		Code:    "invalid_format",
+	}
+}
+
+// TooLongError creates a validation error for exceeding maximum length.
+func TooLongError(field string, maxLen int) ValidationFieldError {
+	return ValidationFieldError{
+		Field:   field,
+		Message: fmt.Sprintf("must be at most %d characters", maxLen),
+		Code:    "too_long",
+	}
+}
+
+// InvalidValueError creates a validation error for an invalid value.
+func InvalidValueError(field, reason string) ValidationFieldError {
+	return ValidationFieldError{
+		Field:   field,
+		Message: reason,
+		Code:    "invalid_value",
+	}
 }

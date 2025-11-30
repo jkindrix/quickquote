@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/jkindrix/quickquote/internal/domain"
+	apperrors "github.com/jkindrix/quickquote/internal/errors"
 )
 
 // PromptRepository implements domain.PromptRepository using PostgreSQL.
@@ -78,8 +79,11 @@ func (r *PromptRepository) Create(ctx context.Context, prompt *domain.Prompt) er
 		prompt.CreatedAt,
 		prompt.UpdatedAt,
 	)
+	if err != nil {
+		return apperrors.DatabaseError("PromptRepository.Create", err)
+	}
 
-	return err
+	return nil
 }
 
 // GetByID retrieves a prompt by its ID.
@@ -160,7 +164,7 @@ func (r *PromptRepository) List(ctx context.Context, limit, offset int, activeOn
 
 	rows, err := r.pool.Query(ctx, query, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, apperrors.DatabaseError("PromptRepository.List", err)
 	}
 	defer rows.Close()
 
@@ -168,12 +172,16 @@ func (r *PromptRepository) List(ctx context.Context, limit, offset int, activeOn
 	for rows.Next() {
 		prompt, err := r.scanPromptFromRows(rows)
 		if err != nil {
-			return nil, err
+			return nil, apperrors.DatabaseError("PromptRepository.List", err)
 		}
 		prompts = append(prompts, prompt)
 	}
 
-	return prompts, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, apperrors.DatabaseError("PromptRepository.List", err)
+	}
+
+	return prompts, nil
 }
 
 // Count returns the total number of prompts.
@@ -185,7 +193,10 @@ func (r *PromptRepository) Count(ctx context.Context, activeOnly bool) (int, err
 
 	var count int
 	err := r.pool.QueryRow(ctx, query).Scan(&count)
-	return count, err
+	if err != nil {
+		return 0, apperrors.DatabaseError("PromptRepository.Count", err)
+	}
+	return count, nil
 }
 
 // Update updates an existing prompt record.
@@ -255,11 +266,11 @@ func (r *PromptRepository) Update(ctx context.Context, prompt *domain.Prompt) er
 	)
 
 	if err != nil {
-		return err
+		return apperrors.DatabaseError("PromptRepository.Update", err)
 	}
 
 	if result.RowsAffected() == 0 {
-		return ErrNotFound
+		return apperrors.NotFound("prompt")
 	}
 
 	return nil
@@ -276,11 +287,11 @@ func (r *PromptRepository) Delete(ctx context.Context, id uuid.UUID) error {
 
 	result, err := r.pool.Exec(ctx, query, id, time.Now())
 	if err != nil {
-		return err
+		return apperrors.DatabaseError("PromptRepository.Delete", err)
 	}
 
 	if result.RowsAffected() == 0 {
-		return ErrNotFound
+		return apperrors.NotFound("prompt")
 	}
 
 	return nil
@@ -290,14 +301,14 @@ func (r *PromptRepository) Delete(ctx context.Context, id uuid.UUID) error {
 func (r *PromptRepository) SetDefault(ctx context.Context, id uuid.UUID) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return apperrors.DatabaseError("PromptRepository.SetDefault", err)
 	}
 	defer tx.Rollback(ctx)
 
 	// Unset any existing default
 	_, err = tx.Exec(ctx, "UPDATE prompts SET is_default = false WHERE is_default = true")
 	if err != nil {
-		return err
+		return apperrors.DatabaseError("PromptRepository.SetDefault", err)
 	}
 
 	// Set the new default
@@ -305,14 +316,17 @@ func (r *PromptRepository) SetDefault(ctx context.Context, id uuid.UUID) error {
 		"UPDATE prompts SET is_default = true, updated_at = $2 WHERE id = $1 AND deleted_at IS NULL",
 		id, time.Now())
 	if err != nil {
-		return err
+		return apperrors.DatabaseError("PromptRepository.SetDefault", err)
 	}
 
 	if result.RowsAffected() == 0 {
-		return ErrNotFound
+		return apperrors.NotFound("prompt")
 	}
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return apperrors.DatabaseError("PromptRepository.SetDefault", err)
+	}
+	return nil
 }
 
 // scanPrompt scans a single row into a Prompt struct.
@@ -352,10 +366,13 @@ func (r *PromptRepository) scanPrompt(row pgx.Row) (*domain.Prompt, error) {
 	)
 
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
+		return nil, apperrors.NotFound("prompt")
+	}
+	if err != nil {
+		return nil, apperrors.DatabaseError("PromptRepository.scanPrompt", err)
 	}
 
-	return &p, err
+	return &p, nil
 }
 
 // scanPromptFromRows scans a row from pgx.Rows into a Prompt struct.

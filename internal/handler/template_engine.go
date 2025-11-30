@@ -82,6 +82,18 @@ func NewTemplateEngine(templatesDir string, logger *zap.Logger) (*TemplateEngine
 			}
 			return s[:maxLen-3] + "..."
 		},
+		"humanize": func(s string) string {
+			clean := strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(strings.TrimSpace(s)), "_", " "), "-", " ")
+			parts := strings.Fields(clean)
+			for i := range parts {
+				part := parts[i]
+				if len(part) == 0 {
+					continue
+				}
+				parts[i] = strings.ToUpper(part[:1]) + part[1:]
+			}
+			return strings.Join(parts, " ")
+		},
 	}
 
 	if err := te.loadTemplates(templatesDir); err != nil {

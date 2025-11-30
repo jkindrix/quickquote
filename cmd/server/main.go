@@ -15,10 +15,12 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/jkindrix/quickquote/internal/ai"
+	"github.com/jkindrix/quickquote/internal/audit"
 	"github.com/jkindrix/quickquote/internal/bland"
 	"github.com/jkindrix/quickquote/internal/config"
 	"github.com/jkindrix/quickquote/internal/database"
 	"github.com/jkindrix/quickquote/internal/handler"
+	"github.com/jkindrix/quickquote/internal/metrics"
 	"github.com/jkindrix/quickquote/internal/middleware"
 	"github.com/jkindrix/quickquote/internal/ratelimit"
 	"github.com/jkindrix/quickquote/internal/repository"
@@ -31,8 +33,8 @@ import (
 )
 
 func main() {
-	// Initialize logger
-	logger, err := initLogger()
+	// Initialize logger with atomic level for runtime adjustment
+	logger, logLevel, err := initLogger()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to initialize logger: %v\n", err)
 		os.Exit(1)
@@ -45,15 +47,26 @@ func main() {
 		logger.Fatal("failed to load configuration", zap.Error(err))
 	}
 
+	appMetrics := metrics.NewMetrics()
+
 	logger.Info("starting QuickQuote server",
 		zap.String("host", cfg.Server.Host),
 		zap.Int("port", cfg.Server.Port),
 		zap.String("env", cfg.Server.Environment),
 	)
 
-	// Initialize database
+	// Initialize database with query logging
 	ctx := context.Background()
-	db, err := database.New(ctx, &cfg.Database, logger)
+	var queryLoggerCfg *database.QueryLoggerConfig
+	if cfg.Database.SlowQueryThreshold > 0 {
+		queryLoggerCfg = &database.QueryLoggerConfig{
+			SlowQueryThreshold:     cfg.Database.SlowQueryThreshold,
+			VerySlowQueryThreshold: cfg.Database.VerySlowQueryThreshold,
+			LogAllQueries:          cfg.Database.LogAllQueries,
+			SampleRate:             0.1, // Sample 10% of queries when logging all
+		}
+	}
+	db, err := database.NewWithQueryLogger(ctx, &cfg.Database, queryLoggerCfg, logger)
 	if err != nil {
 		logger.Fatal("failed to connect to database", zap.Error(err))
 	}
@@ -76,6 +89,7 @@ func main() {
 		sessionRepo,
 		cfg.Auth.SessionDuration,
 		logger,
+		appMetrics,
 	)
 
 	// Seed initial admin user if no users exist (enables zero-config deployment)
@@ -145,7 +159,11 @@ func main() {
 	)
 
 	// Initialize services
-	callService := service.NewCallService(callRepo, claudeClient, jobProcessor, logger)
+	callService := service.NewCallService(callRepo, claudeClient, jobProcessor, logger, appMetrics)
+
+	// Initialize settings service (needed by BlandService)
+	settingsService := service.NewSettingsService(settingsRepo, logger)
+	logger.Info("initialized settings service")
 
 	// Build webhook URL for Bland callbacks
 	// In production, this should be configured to your public URL
@@ -159,6 +177,7 @@ func main() {
 		blandClient,
 		callRepo,
 		promptRepo,
+		settingsService,
 		webhookURL,
 		logger,
 	)
@@ -167,16 +186,15 @@ func main() {
 	// Initialize prompt service
 	promptService := service.NewPromptService(promptRepo, logger)
 
-	// Initialize settings service
-	settingsService := service.NewSettingsService(settingsRepo, logger)
-	logger.Info("initialized settings service")
-
-	// Connect settings service to bland service for settings-driven configs
-	blandService.SetSettingsService(settingsService)
+	// Initialize audit logger
+	auditLogger := audit.NewLogger(logger)
+	logger.Info("initialized audit logger")
 
 	// Initialize rate limiters
 	rateLimiter := middleware.NewRateLimiter(cfg.RateLimit.Requests, cfg.RateLimit.Window, logger)
 	loginRateLimiter := middleware.NewLoginRateLimiter(logger)
+	userRateLimitRepo := repository.NewUserRateLimitRepository(db.Pool, logger)
+	userRateLimiter := ratelimit.NewUserRateLimiter(ratelimit.DefaultUserRateLimitConfig(), userRateLimitRepo, logger)
 
 	// Initialize CSRF protection with database persistence
 	csrfProtection := middleware.NewCSRFProtectionWithRepo(csrfRepo, logger)
@@ -200,6 +218,7 @@ func main() {
 		Base:             baseHandlerCfg,
 		AuthService:      authService,
 		LoginRateLimiter: loginRateLimiter,
+		Metrics:          appMetrics,
 	})
 
 	// Health handler for health check endpoints
@@ -215,6 +234,7 @@ func main() {
 		CallService:      callService,
 		ProviderRegistry: providerRegistry,
 		Logger:           logger,
+		Metrics:          appMetrics,
 	})
 
 	// Calls handler for dashboard and call management
@@ -229,11 +249,12 @@ func main() {
 		BlandService:    blandService,
 		PromptService:   promptService,
 		SettingsService: settingsService,
+		QuoteJobRepo:    quoteJobRepo,
 	})
 
 	// Initialize API handlers
-	callAPIHandler := handler.NewCallAPIHandler(blandService, logger)
-	promptAPIHandler := handler.NewPromptAPIHandler(promptService, logger)
+	callAPIHandler := handler.NewCallAPIHandler(blandService, auditLogger, logger)
+	promptAPIHandler := handler.NewPromptAPIHandler(promptService, auditLogger, logger)
 	promptAPIHandler.SetBlandService(blandService) // Enable apply-to-inbound functionality
 	blandAPIHandler := handler.NewBlandAPIHandler(blandService, logger)
 
@@ -249,13 +270,15 @@ func main() {
 	r.Use(middleware.RequestLogger(logger))
 	r.Use(middleware.Recovery(logger))
 	r.Use(chimiddleware.Compress(5))
-	r.Use(middleware.RateLimit(rateLimiter))
+	r.Use(middleware.RateLimit(rateLimiter, appMetrics))
+	r.Use(appMetrics.Middleware)
 
 	// CSRF protection (skip webhook endpoints and API routes)
-	r.Use(csrfProtection.SkipPath("/webhook/bland", "/health", "/ready", "/live", "/api/"))
+	r.Use(csrfProtection.SkipPath("/webhook/bland", "/health", "/ready", "/live", "/api/", "/metrics"))
 
 	// Serve static files
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))))
+	r.Handle("/metrics", appMetrics.Handler())
 
 	// Register public routes (auth handlers)
 	authHandler.RegisterRoutes(r)
@@ -266,23 +289,31 @@ func main() {
 	// Register health check routes
 	healthHandler.RegisterRoutes(r)
 
+	// Initialize log level handler for runtime adjustment
+	logLevelHandler := handler.NewLogLevelHandler(logLevel, logger)
+
 	// Register protected routes (require authentication)
 	r.Group(func(r chi.Router) {
 		r.Use(authHandler.Middleware)
+		r.Use(middleware.UserRateLimit(userRateLimiter, logger, appMetrics))
 
 		// Dashboard and calls
 		callsHandler.RegisterRoutes(r)
 
 		// Admin pages (settings, phone numbers, voices, usage, knowledge bases, presets)
 		adminHandler.RegisterRoutes(r)
+
+		// Admin API for runtime log level adjustment
+		r.Handle("/admin/log-level", logLevelHandler)
 	})
 
-	// Register API v1 routes
-	r.Route("/api/v1", func(r chi.Router) {
-		callAPIHandler.RegisterRoutes(r)
-		promptAPIHandler.RegisterRoutes(r)
-		blandAPIHandler.RegisterRoutes(r)
-	})
+	// Register API v1 routes with JSON body limits
+	apiRouter := chi.NewRouter()
+	apiRouter.Use(middleware.BodySizeLimiterJSON())
+	callAPIHandler.RegisterRoutes(apiRouter)
+	promptAPIHandler.RegisterRoutes(apiRouter)
+	blandAPIHandler.RegisterRoutes(apiRouter)
+	r.Mount("/api/v1", apiRouter)
 	logger.Info("registered API v1 routes",
 		zap.Strings("endpoints", []string{
 			"/api/v1/calls/*",
@@ -319,6 +350,50 @@ func main() {
 		Timeout: 30 * time.Second,
 	}, logger)
 
+	var metricsStop chan struct{}
+	if appMetrics != nil {
+		metricsStop = make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					stats := db.Stats()
+					if stats != nil {
+						appMetrics.UpdateDBConnections(int(stats.TotalConns()), int(stats.AcquiredConns()))
+					}
+				case <-metricsStop:
+					return
+				}
+			}
+		}()
+		shutdownCoord.RegisterFunc(shutdown.PhaseCleanup, "metrics-updater", func(ctx context.Context) error {
+			close(metricsStop)
+			return nil
+		})
+	}
+
+	rateLimitCleanupStop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				_ = userRateLimitRepo.ResetExpiredWindows(cleanupCtx)
+				cancel()
+			case <-rateLimitCleanupStop:
+				return
+			}
+		}
+	}()
+	shutdownCoord.RegisterFunc(shutdown.PhaseCleanup, "user-rate-limit-cleanup", func(ctx context.Context) error {
+		close(rateLimitCleanupStop)
+		return nil
+	})
+
 	// Start session cleanup goroutine (respects shutdown signal)
 	cleanupDone := make(chan struct{})
 	go func() {
@@ -352,6 +427,9 @@ func main() {
 	shutdownCoord.RegisterFunc(shutdown.PhaseShutdown, "job-processor", func(ctx context.Context) error {
 		return jobProcessor.Stop(ctx)
 	})
+	shutdownCoord.RegisterFunc(shutdown.PhaseShutdown, "csrf-protection", func(ctx context.Context) error {
+		return csrfProtection.Shutdown(ctx)
+	})
 
 	// Phase 4 (Cleanup): Close connections and flush buffers
 	shutdownCoord.RegisterFunc(shutdown.PhaseCleanup, "session-cleanup", func(ctx context.Context) error {
@@ -382,12 +460,33 @@ func main() {
 }
 
 // initLogger initializes the zap logger based on environment.
-func initLogger() (*zap.Logger, error) {
+// Returns both the logger and the atomic level for runtime adjustment.
+func initLogger() (*zap.Logger, zap.AtomicLevel, error) {
 	env := os.Getenv("APP_ENV")
+
+	// Create atomic level for runtime adjustment
+	var level zap.AtomicLevel
 	if env == "production" {
-		return zap.NewProduction()
+		level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	} else {
+		level = zap.NewAtomicLevelAt(zap.DebugLevel)
 	}
-	return zap.NewDevelopment()
+
+	// Build config with atomic level
+	var config zap.Config
+	if env == "production" {
+		config = zap.NewProductionConfig()
+	} else {
+		config = zap.NewDevelopmentConfig()
+	}
+	config.Level = level
+
+	logger, err := config.Build()
+	if err != nil {
+		return nil, level, err
+	}
+
+	return logger, level, nil
 }
 
 // initVoiceProviders initializes and registers all configured voice providers.

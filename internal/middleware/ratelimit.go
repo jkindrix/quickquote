@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/jkindrix/quickquote/internal/metrics"
 )
 
 // RateLimiter implements a token bucket rate limiter per IP address.
@@ -109,7 +111,7 @@ func (rl *RateLimiter) remaining(ip string) int {
 }
 
 // RateLimit returns HTTP middleware that rate limits requests.
-func RateLimit(rl *RateLimiter) func(http.Handler) http.Handler {
+func RateLimit(rl *RateLimiter, metricsCollector *metrics.Metrics) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := getClientIP(r)
@@ -119,6 +121,9 @@ func RateLimit(rl *RateLimiter) func(http.Handler) http.Handler {
 					zap.String("ip", ip),
 					zap.String("path", r.URL.Path),
 				)
+				if metricsCollector != nil {
+					metricsCollector.RateLimitHitsTotal.WithLabelValues("general").Inc()
+				}
 				w.Header().Set("Retry-After", "60")
 				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 				return

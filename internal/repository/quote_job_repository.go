@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/jkindrix/quickquote/internal/domain"
+	apperrors "github.com/jkindrix/quickquote/internal/errors"
 )
 
 // QuoteJobRepository implements domain.QuoteJobRepository using PostgreSQL.
@@ -28,7 +28,7 @@ func NewQuoteJobRepository(pool *pgxpool.Pool) *QuoteJobRepository {
 func (r *QuoteJobRepository) Create(ctx context.Context, job *domain.QuoteJob) error {
 	metadataJSON, err := json.Marshal(job.Metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
+		return apperrors.Wrap(err, "QuoteJobRepository.Create", apperrors.CodeInternal, "failed to marshal metadata")
 	}
 
 	query := `
@@ -56,7 +56,7 @@ func (r *QuoteJobRepository) Create(ctx context.Context, job *domain.QuoteJob) e
 		metadataJSON,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to insert quote job: %w", err)
+		return apperrors.DatabaseError("QuoteJobRepository.Create", err)
 	}
 
 	return nil
@@ -94,7 +94,7 @@ func (r *QuoteJobRepository) GetByCallID(ctx context.Context, callID uuid.UUID) 
 func (r *QuoteJobRepository) Update(ctx context.Context, job *domain.QuoteJob) error {
 	metadataJSON, err := json.Marshal(job.Metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
+		return apperrors.Wrap(err, "QuoteJobRepository.Update", apperrors.CodeInternal, "failed to marshal metadata")
 	}
 
 	query := `
@@ -125,11 +125,11 @@ func (r *QuoteJobRepository) Update(ctx context.Context, job *domain.QuoteJob) e
 		metadataJSON,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to update quote job: %w", err)
+		return apperrors.DatabaseError("QuoteJobRepository.Update", err)
 	}
 
 	if result.RowsAffected() == 0 {
-		return ErrNotFound
+		return apperrors.NotFound("quote_job")
 	}
 
 	return nil
@@ -177,7 +177,7 @@ func (r *QuoteJobRepository) CountByStatus(ctx context.Context) (map[domain.Quot
 
 	rows, err := r.pool.Query(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to count jobs by status: %w", err)
+		return nil, apperrors.DatabaseError("QuoteJobRepository.CountByStatus", err)
 	}
 	defer rows.Close()
 
@@ -186,13 +186,13 @@ func (r *QuoteJobRepository) CountByStatus(ctx context.Context) (map[domain.Quot
 		var status string
 		var count int
 		if err := rows.Scan(&status, &count); err != nil {
-			return nil, fmt.Errorf("failed to scan status count: %w", err)
+			return nil, apperrors.DatabaseError("QuoteJobRepository.CountByStatus", err)
 		}
 		counts[domain.QuoteJobStatus(status)] = count
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating status counts: %w", err)
+		return nil, apperrors.DatabaseError("QuoteJobRepository.CountByStatus", err)
 	}
 
 	return counts, nil
@@ -220,15 +220,15 @@ func (r *QuoteJobRepository) scanJob(ctx context.Context, query string, args ...
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
+			return nil, apperrors.NotFound("quote_job")
 		}
-		return nil, fmt.Errorf("failed to scan quote job: %w", err)
+		return nil, apperrors.DatabaseError("QuoteJobRepository.scanJob", err)
 	}
 
 	if len(metadataJSON) > 0 {
 		job.Metadata = make(map[string]interface{})
 		if err := json.Unmarshal(metadataJSON, &job.Metadata); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+			return nil, apperrors.Wrap(err, "QuoteJobRepository.scanJob", apperrors.CodeInternal, "failed to unmarshal metadata")
 		}
 	}
 
@@ -239,7 +239,7 @@ func (r *QuoteJobRepository) scanJob(ctx context.Context, query string, args ...
 func (r *QuoteJobRepository) scanJobs(ctx context.Context, query string, args ...interface{}) ([]*domain.QuoteJob, error) {
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query quote jobs: %w", err)
+		return nil, apperrors.DatabaseError("QuoteJobRepository.scanJobs", err)
 	}
 	defer rows.Close()
 
@@ -264,13 +264,13 @@ func (r *QuoteJobRepository) scanJobs(ctx context.Context, query string, args ..
 			&metadataJSON,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan quote job row: %w", err)
+			return nil, apperrors.DatabaseError("QuoteJobRepository.scanJobs", err)
 		}
 
 		if len(metadataJSON) > 0 {
 			job.Metadata = make(map[string]interface{})
 			if err := json.Unmarshal(metadataJSON, &job.Metadata); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+				return nil, apperrors.Wrap(err, "QuoteJobRepository.scanJobs", apperrors.CodeInternal, "failed to unmarshal metadata")
 			}
 		}
 
@@ -278,7 +278,7 @@ func (r *QuoteJobRepository) scanJobs(ctx context.Context, query string, args ..
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating quote job rows: %w", err)
+		return nil, apperrors.DatabaseError("QuoteJobRepository.scanJobs", err)
 	}
 
 	return jobs, nil

@@ -38,6 +38,7 @@ type CallsPageData struct {
 	Page       int
 	PageSize   int
 	TotalPages int
+	Filter     CallListFilterView
 }
 
 // CallDetailPageData contains data for the call detail template.
@@ -168,6 +169,7 @@ func (d *CallsPageData) ToMap() map[string]interface{} {
 	m["Page"] = d.Page
 	m["PageSize"] = d.PageSize
 	m["TotalPages"] = d.TotalPages
+	m["Filter"] = d.Filter
 	return m
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
+	"github.com/jkindrix/quickquote/internal/metrics"
 	"github.com/jkindrix/quickquote/internal/middleware"
 	"github.com/jkindrix/quickquote/internal/service"
 )
@@ -22,6 +23,7 @@ type AuthHandler struct {
 	*BaseHandler
 	authService      *service.AuthService
 	loginRateLimiter *middleware.LoginRateLimiter
+	metrics          *metrics.Metrics
 }
 
 // AuthHandlerConfig holds configuration for AuthHandler.
@@ -29,6 +31,7 @@ type AuthHandlerConfig struct {
 	Base             BaseHandlerConfig
 	AuthService      *service.AuthService
 	LoginRateLimiter *middleware.LoginRateLimiter
+	Metrics          *metrics.Metrics
 }
 
 // NewAuthHandler creates a new AuthHandler with all required dependencies.
@@ -40,6 +43,7 @@ func NewAuthHandler(cfg AuthHandlerConfig) *AuthHandler {
 		BaseHandler:      NewBaseHandler(cfg.Base),
 		authService:      cfg.AuthService,
 		loginRateLimiter: cfg.LoginRateLimiter,
+		metrics:          cfg.Metrics,
 	}
 }
 
@@ -47,7 +51,7 @@ func NewAuthHandler(cfg AuthHandlerConfig) *AuthHandler {
 func (h *AuthHandler) RegisterRoutes(r chi.Router) {
 	r.Get("/", h.HandleIndex)
 	r.Get("/login", h.HandleLoginPage)
-	r.Post("/login", h.HandleLogin)
+	r.With(middleware.BodySizeLimiterForm()).Post("/login", h.HandleLogin)
 	r.Get("/logout", h.HandleLogout)
 }
 
@@ -83,6 +87,9 @@ func (h *AuthHandler) Middleware(next http.Handler) http.Handler {
 		}
 
 		ctx := context.WithValue(r.Context(), userContextKey, result.User)
+		if result.User != nil {
+			ctx = middleware.WithUserID(ctx, result.User.ID)
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -136,6 +143,9 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 			zap.String("email", email),
 			zap.String("ip", ip),
 		)
+		if h.metrics != nil {
+			h.metrics.RecordAuthRateLimited()
+		}
 		h.Render(w, r, "login", &LoginPageData{
 			Title: "Login",
 			Error: "Too many login attempts. Please try again in 30 minutes.",
@@ -165,6 +175,9 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 			zap.String("email", email),
 			zap.Error(err),
 		)
+		if h.metrics != nil {
+			h.metrics.RecordAuthAttempt(false)
+		}
 
 		errorMsg := "Invalid email or password"
 		var authErr *service.AuthError
@@ -192,6 +205,11 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	// Record successful login to reset rate limit
 	if h.loginRateLimiter != nil {
 		h.loginRateLimiter.RecordSuccess(ip, email)
+	}
+
+	if h.metrics != nil {
+		h.metrics.RecordAuthAttempt(true)
+		h.metrics.RecordSessionCreated()
 	}
 
 	// Set session cookie

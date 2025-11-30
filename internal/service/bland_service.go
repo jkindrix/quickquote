@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +15,69 @@ import (
 	"github.com/jkindrix/quickquote/internal/domain"
 )
 
+// idempotencyEntry stores a cached response for an idempotency key.
+type idempotencyEntry struct {
+	Response  *InitiateCallResponse
+	CreatedAt time.Time
+}
+
+// idempotencyCache provides thread-safe caching for idempotency keys.
+type idempotencyCache struct {
+	entries map[string]*idempotencyEntry
+	mu      sync.RWMutex
+	ttl     time.Duration
+}
+
+// newIdempotencyCache creates a new idempotency cache.
+func newIdempotencyCache(ttl time.Duration) *idempotencyCache {
+	return &idempotencyCache{
+		entries: make(map[string]*idempotencyEntry),
+		ttl:     ttl,
+	}
+}
+
+// Get retrieves a cached response for the given key.
+func (c *idempotencyCache) Get(key string) (*InitiateCallResponse, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	entry, ok := c.entries[key]
+	if !ok {
+		return nil, false
+	}
+
+	// Check if entry has expired
+	if time.Since(entry.CreatedAt) > c.ttl {
+		return nil, false
+	}
+
+	return entry.Response, true
+}
+
+// Set stores a response for the given key.
+func (c *idempotencyCache) Set(key string, response *InitiateCallResponse) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.entries[key] = &idempotencyEntry{
+		Response:  response,
+		CreatedAt: time.Now(),
+	}
+}
+
+// Cleanup removes expired entries from the cache.
+func (c *idempotencyCache) Cleanup() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := time.Now()
+	for key, entry := range c.entries {
+		if now.Sub(entry.CreatedAt) > c.ttl {
+			delete(c.entries, key)
+		}
+	}
+}
+
 // BlandService handles voice call initiation and management via Bland AI.
 type BlandService struct {
 	blandClient     *bland.Client
@@ -22,34 +86,43 @@ type BlandService struct {
 	settingsService *SettingsService
 	webhookURL      string
 	logger          *zap.Logger
+
+	// Idempotency cache for preventing duplicate calls
+	idempotencyCache *idempotencyCache
 }
+
+// IdempotencyKeyTTL is the duration for which idempotency keys are cached.
+const IdempotencyKeyTTL = 24 * time.Hour
 
 // NewBlandService creates a new BlandService.
 func NewBlandService(
 	blandClient *bland.Client,
 	callRepo domain.CallRepository,
 	promptRepo domain.PromptRepository,
+	settingsService *SettingsService,
 	webhookURL string,
 	logger *zap.Logger,
 ) *BlandService {
 	return &BlandService{
-		blandClient: blandClient,
-		callRepo:    callRepo,
-		promptRepo:  promptRepo,
-		webhookURL:  webhookURL,
-		logger:      logger,
+		blandClient:      blandClient,
+		callRepo:         callRepo,
+		promptRepo:       promptRepo,
+		settingsService:  settingsService,
+		webhookURL:       webhookURL,
+		logger:           logger,
+		idempotencyCache: newIdempotencyCache(IdempotencyKeyTTL),
 	}
-}
-
-// SetSettingsService sets the settings service for retrieving call configuration.
-func (s *BlandService) SetSettingsService(ss *SettingsService) {
-	s.settingsService = ss
 }
 
 // InitiateCallRequest contains parameters for initiating a call.
 type InitiateCallRequest struct {
 	// Required: Phone number to call (E.164 format)
 	PhoneNumber string `json:"phone_number"`
+
+	// IdempotencyKey: Unique key to prevent duplicate calls (optional)
+	// If provided and a call was already initiated with this key,
+	// the cached response will be returned instead of creating a new call.
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 
 	// PromptID: Use a saved prompt (optional if Task provided)
 	PromptID *uuid.UUID `json:"prompt_id,omitempty"`
@@ -102,6 +175,17 @@ func (s *BlandService) InitiateCall(ctx context.Context, req *InitiateCallReques
 		return nil, fmt.Errorf("phone_number is required")
 	}
 
+	// Check idempotency key if provided
+	if req.IdempotencyKey != "" {
+		if cached, ok := s.idempotencyCache.Get(req.IdempotencyKey); ok {
+			s.logger.Info("returning cached response for idempotency key",
+				zap.String("idempotency_key", req.IdempotencyKey),
+				zap.String("call_id", cached.CallID.String()),
+			)
+			return cached, nil
+		}
+	}
+
 	// Build the Bland API request
 	blandReq, prompt, err := s.buildBlandRequest(ctx, req)
 	if err != nil {
@@ -116,6 +200,7 @@ func (s *BlandService) InitiateCall(ctx context.Context, req *InitiateCallReques
 	s.logger.Info("initiating call",
 		zap.String("phone_number", req.PhoneNumber),
 		zap.String("webhook", blandReq.Webhook),
+		zap.String("idempotency_key", req.IdempotencyKey),
 	)
 
 	// Send the call via Bland API
@@ -159,14 +244,21 @@ func (s *BlandService) InitiateCall(ctx context.Context, req *InitiateCallReques
 		zap.ByteString("params", paramsJSON),
 	)
 
-	return &InitiateCallResponse{
+	response := &InitiateCallResponse{
 		CallID:      call.ID,
 		BlandCallID: blandResp.CallID,
 		Status:      blandResp.Status,
 		PhoneNumber: req.PhoneNumber,
 		PromptID:    promptID,
 		PromptName:  promptName,
-	}, nil
+	}
+
+	// Cache the response for idempotency
+	if req.IdempotencyKey != "" {
+		s.idempotencyCache.Set(req.IdempotencyKey, response)
+	}
+
+	return response, nil
 }
 
 // buildBlandRequest constructs the Bland API request from our request.

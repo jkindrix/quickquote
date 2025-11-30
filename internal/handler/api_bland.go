@@ -10,6 +10,7 @@ import (
 
 	"github.com/jkindrix/quickquote/internal/bland"
 	"github.com/jkindrix/quickquote/internal/service"
+	"github.com/jkindrix/quickquote/internal/validation"
 )
 
 // BlandAPIHandler handles Bland AI management API endpoints.
@@ -572,12 +573,16 @@ func (h *BlandAPIHandler) ClearCustomerMemory(w http.ResponseWriter, r *http.Req
 // ListBatches handles GET /api/v1/bland/batches
 func (h *BlandAPIHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 {
-		limit = 20
-	}
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 
-	batches, err := h.blandService.ListBatches(r.Context(), limit, offset)
+	// Validate and normalize pagination parameters
+	params, err := validation.ValidatePaginationWithDefaults(limit, offset)
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	batches, err := h.blandService.ListBatches(r.Context(), params.Limit, params.Offset)
 	if err != nil {
 		h.logger.Error("failed to list batches", zap.Error(err))
 		h.respondError(w, http.StatusInternalServerError, "failed to list batches")
@@ -834,16 +839,11 @@ func (h *BlandAPIHandler) GetCircuitBreakerStats(w http.ResponseWriter, r *http.
 // ===============================================
 
 func (h *BlandAPIHandler) respondJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	JSON(w, status, data)
 }
 
 func (h *BlandAPIHandler) respondError(w http.ResponseWriter, status int, message string) {
-	h.respondJSON(w, status, ErrorResponse{
-		Error:   http.StatusText(status),
-		Message: message,
-	})
+	APIError(w, status, message)
 }
 
 // ===============================================
@@ -888,6 +888,12 @@ func (h *BlandAPIHandler) SearchAvailableNumbers(w http.ResponseWriter, r *http.
 	}
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 		if limit, err := strconv.Atoi(limitStr); err == nil {
+			// Clamp limit to sensible bounds for phone number search
+			if limit <= 0 {
+				limit = 10
+			} else if limit > 100 {
+				limit = 100
+			}
 			req.Limit = limit
 		}
 	}

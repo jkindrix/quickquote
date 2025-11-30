@@ -20,6 +20,7 @@ type AdminHandler struct {
 	blandService    *service.BlandService
 	promptService   *service.PromptService
 	settingsService *service.SettingsService
+	quoteJobRepo    domain.QuoteJobRepository
 }
 
 // AdminHandlerConfig holds configuration for AdminHandler.
@@ -28,6 +29,7 @@ type AdminHandlerConfig struct {
 	BlandService    *service.BlandService
 	PromptService   *service.PromptService
 	SettingsService *service.SettingsService
+	QuoteJobRepo    domain.QuoteJobRepository
 }
 
 // NewAdminHandler creates a new AdminHandler with all required dependencies.
@@ -37,6 +39,7 @@ func NewAdminHandler(cfg AdminHandlerConfig) *AdminHandler {
 		blandService:    cfg.BlandService,
 		promptService:   cfg.PromptService,
 		settingsService: cfg.SettingsService,
+		quoteJobRepo:    cfg.QuoteJobRepo,
 	}
 }
 
@@ -545,6 +548,17 @@ func (h *AdminHandler) HandleUsagePage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	jobStats := map[string]int{}
+	if h.quoteJobRepo != nil {
+		if counts, err := h.quoteJobRepo.CountByStatus(ctx); err != nil {
+			h.logger.Warn("failed to load quote job stats", zap.Error(err))
+		} else {
+			for status, count := range counts {
+				jobStats[string(status)] = count
+			}
+		}
+	}
+
 	h.RenderTemplate(w, r, "usage", map[string]interface{}{
 		"Title":      "Usage",
 		"ActiveNav":  "usage",
@@ -554,6 +568,7 @@ func (h *AdminHandler) HandleUsagePage(w http.ResponseWriter, r *http.Request) {
 		"DailyUsage": dailyUsage,
 		"Alerts":     alerts,
 		"Error":      errMsg,
+		"QuoteJobs":  jobStats,
 	})
 }
 

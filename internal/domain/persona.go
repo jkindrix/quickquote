@@ -44,8 +44,21 @@ type Persona struct {
 	LastSyncedAt    *time.Time `json:"last_synced_at,omitempty" db:"last_synced_at"`
 	SyncError       string    `json:"sync_error,omitempty" db:"sync_error"`
 
-	CreatedAt       time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at" db:"updated_at"`
+	CreatedAt       time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at" db:"updated_at"`
+	DeletedAt       *time.Time `json:"deleted_at,omitempty" db:"deleted_at"`
+}
+
+// IsDeleted returns true if the persona has been soft-deleted.
+func (p *Persona) IsDeleted() bool {
+	return p.DeletedAt != nil
+}
+
+// MarkDeleted soft-deletes the persona by setting DeletedAt.
+func (p *Persona) MarkDeleted() {
+	now := time.Now().UTC()
+	p.DeletedAt = &now
+	p.UpdatedAt = now
 }
 
 // PersonaVoiceSettings contains voice customization parameters.

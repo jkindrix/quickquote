@@ -120,6 +120,44 @@ body.login-page {
     color: #007bff;
 }
 
+.filter-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: flex-end;
+    margin-bottom: 1rem;
+}
+
+.filter-group {
+    display: flex;
+    flex-direction: column;
+    min-width: 200px;
+}
+
+.filter-group label {
+    font-size: 0.85rem;
+    color: #555;
+    margin-bottom: 0.25rem;
+}
+
+.filter-group select,
+.filter-group input {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 0.95rem;
+}
+
+.filter-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.btn-outline.disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
 /* Detail Grid */
 .detail-grid {
     display: grid;

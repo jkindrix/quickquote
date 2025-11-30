@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/jkindrix/quickquote/internal/audit"
 	"github.com/jkindrix/quickquote/internal/bland"
 	"github.com/jkindrix/quickquote/internal/service"
 )
@@ -18,13 +19,15 @@ import (
 type PromptAPIHandler struct {
 	promptService *service.PromptService
 	blandService  *service.BlandService
+	auditLogger   *audit.Logger
 	logger        *zap.Logger
 }
 
 // NewPromptAPIHandler creates a new PromptAPIHandler.
-func NewPromptAPIHandler(promptService *service.PromptService, logger *zap.Logger) *PromptAPIHandler {
+func NewPromptAPIHandler(promptService *service.PromptService, auditLogger *audit.Logger, logger *zap.Logger) *PromptAPIHandler {
 	return &PromptAPIHandler{
 		promptService: promptService,
+		auditLogger:   auditLogger,
 		logger:        logger,
 	}
 }
@@ -134,6 +137,17 @@ func (h *PromptAPIHandler) CreatePrompt(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Audit log the prompt creation
+	if h.auditLogger != nil {
+		user := GetUserFromContext(r.Context())
+		userID, userName := "", ""
+		if user != nil {
+			userID = user.ID.String()
+			userName = user.Email
+		}
+		h.auditLogger.PromptCreated(r.Context(), userID, userName, prompt.ID.String(), prompt.Name, getClientIP(r), GetRequestIDFromContext(r.Context()))
+	}
+
 	h.respondJSON(w, http.StatusCreated, prompt)
 }
 
@@ -218,6 +232,31 @@ func (h *PromptAPIHandler) UpdatePrompt(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Audit log the prompt update
+	if h.auditLogger != nil {
+		user := GetUserFromContext(r.Context())
+		userID, userName := "", ""
+		if user != nil {
+			userID = user.ID.String()
+			userName = user.Email
+		}
+		// Convert request to changes map for audit
+		changes := make(map[string]interface{})
+		if req.Name != nil {
+			changes["name"] = *req.Name
+		}
+		if req.Task != nil {
+			changes["task"] = "(updated)"
+		}
+		if req.Voice != nil {
+			changes["voice"] = *req.Voice
+		}
+		if req.IsActive != nil {
+			changes["is_active"] = *req.IsActive
+		}
+		h.auditLogger.PromptUpdated(r.Context(), userID, userName, prompt.ID.String(), prompt.Name, getClientIP(r), GetRequestIDFromContext(r.Context()), changes)
+	}
+
 	h.respondJSON(w, http.StatusOK, prompt)
 }
 
@@ -243,6 +282,17 @@ func (h *PromptAPIHandler) DeletePrompt(w http.ResponseWriter, r *http.Request) 
 		h.logger.Error("failed to delete prompt", zap.String("id", promptIDStr), zap.Error(err))
 		h.respondError(w, http.StatusInternalServerError, "failed to delete prompt")
 		return
+	}
+
+	// Audit log the prompt deletion
+	if h.auditLogger != nil {
+		user := GetUserFromContext(r.Context())
+		userID, userName := "", ""
+		if user != nil {
+			userID = user.ID.String()
+			userName = user.Email
+		}
+		h.auditLogger.PromptDeleted(r.Context(), userID, userName, promptIDStr, "", getClientIP(r), GetRequestIDFromContext(r.Context()))
 	}
 
 	h.respondJSON(w, http.StatusOK, map[string]string{
@@ -328,16 +378,11 @@ func (h *PromptAPIHandler) DuplicatePrompt(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *PromptAPIHandler) respondJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	JSON(w, status, data)
 }
 
 func (h *PromptAPIHandler) respondError(w http.ResponseWriter, status int, message string) {
-	h.respondJSON(w, status, ErrorResponse{
-		Error:   http.StatusText(status),
-		Message: message,
-	})
+	APIError(w, status, message)
 }
 
 // ApplyToInboundRequest contains optional phone number override.

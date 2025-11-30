@@ -6,6 +6,32 @@
         <p>Monitor your API usage and costs</p>
     </div>
 
+    {{if .QuoteJobs}}
+    <div class="card">
+        <h2>Quote Job Queue</h2>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Status</th>
+                    <th>Jobs</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range $status, $count := .QuoteJobs}}
+                <tr>
+                    <td>{{humanize $status}}</td>
+                    <td>{{$count}}</td>
+                </tr>
+                {{else}}
+                <tr>
+                    <td colspan="2" style="text-align:center;color:#666;">No queued jobs</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{end}}
+
     <div class="usage-grid">
         <div class="usage-card">
             <h4>Total Calls</h4>

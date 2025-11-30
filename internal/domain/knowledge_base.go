@@ -24,6 +24,19 @@ type KnowledgeBase struct {
 	MetadataJSON    string            `json:"-" db:"metadata"`
 	CreatedAt       time.Time         `json:"created_at" db:"created_at"`
 	UpdatedAt       time.Time         `json:"updated_at" db:"updated_at"`
+	DeletedAt       *time.Time        `json:"deleted_at,omitempty" db:"deleted_at"`
+}
+
+// IsDeleted returns true if the knowledge base has been soft-deleted.
+func (kb *KnowledgeBase) IsDeleted() bool {
+	return kb.DeletedAt != nil
+}
+
+// MarkDeleted soft-deletes the knowledge base by setting DeletedAt.
+func (kb *KnowledgeBase) MarkDeleted() {
+	now := time.Now().UTC()
+	kb.DeletedAt = &now
+	kb.UpdatedAt = now
 }
 
 // KnowledgeBaseStatus constants.

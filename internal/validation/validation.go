@@ -350,3 +350,135 @@ func SanitizePhoneNumber(phone string) string {
 	}
 	return result
 }
+
+// PaginationConfig contains constraints for pagination parameters.
+type PaginationConfig struct {
+	MaxLimit     int // Maximum allowed limit (default: 1000)
+	DefaultLimit int // Default limit when not specified (default: 20)
+	MaxOffset    int // Maximum allowed offset (default: 100000)
+}
+
+// DefaultPaginationConfig returns sensible defaults for pagination.
+func DefaultPaginationConfig() *PaginationConfig {
+	return &PaginationConfig{
+		MaxLimit:     1000,
+		DefaultLimit: 20,
+		MaxOffset:    100000, // Prevent resource exhaustion from huge offsets
+	}
+}
+
+// PaginationParams represents validated pagination parameters.
+type PaginationParams struct {
+	Limit  int
+	Offset int
+}
+
+// ValidatePagination validates and normalizes pagination parameters.
+// Returns validated params or an error if validation fails.
+func ValidatePagination(limit, offset int, cfg *PaginationConfig) (*PaginationParams, error) {
+	if cfg == nil {
+		cfg = DefaultPaginationConfig()
+	}
+
+	// Normalize limit
+	if limit <= 0 {
+		limit = cfg.DefaultLimit
+	}
+	if limit > cfg.MaxLimit {
+		return nil, fmt.Errorf("limit must not exceed %d (got %d)", cfg.MaxLimit, limit)
+	}
+
+	// Validate offset
+	if offset < 0 {
+		return nil, fmt.Errorf("offset must not be negative (got %d)", offset)
+	}
+	if offset > cfg.MaxOffset {
+		return nil, fmt.Errorf("offset must not exceed %d (got %d)", cfg.MaxOffset, offset)
+	}
+
+	return &PaginationParams{
+		Limit:  limit,
+		Offset: offset,
+	}, nil
+}
+
+// ValidatePaginationWithDefaults validates pagination with default configuration.
+func ValidatePaginationWithDefaults(limit, offset int) (*PaginationParams, error) {
+	return ValidatePagination(limit, offset, nil)
+}
+
+// NormalizePaginationParams normalizes limit and offset without strict validation.
+// Use this when you want to silently clamp values instead of returning errors.
+func NormalizePaginationParams(limit, offset int, cfg *PaginationConfig) PaginationParams {
+	if cfg == nil {
+		cfg = DefaultPaginationConfig()
+	}
+
+	// Clamp limit
+	if limit <= 0 {
+		limit = cfg.DefaultLimit
+	} else if limit > cfg.MaxLimit {
+		limit = cfg.MaxLimit
+	}
+
+	// Clamp offset
+	if offset < 0 {
+		offset = 0
+	} else if offset > cfg.MaxOffset {
+		offset = cfg.MaxOffset
+	}
+
+	return PaginationParams{
+		Limit:  limit,
+		Offset: offset,
+	}
+}
+
+// PaginationValidator extends Validator with pagination validation.
+type PaginationValidator struct {
+	*Validator
+	config *PaginationConfig
+}
+
+// NewPaginationValidator creates a pagination validator with optional config.
+func NewPaginationValidator(cfg *PaginationConfig) *PaginationValidator {
+	if cfg == nil {
+		cfg = DefaultPaginationConfig()
+	}
+	return &PaginationValidator{
+		Validator: New(),
+		config:    cfg,
+	}
+}
+
+// ValidateLimit validates the limit parameter.
+func (v *PaginationValidator) ValidateLimit(limit int) bool {
+	if limit <= 0 {
+		return true // Will be normalized to default
+	}
+	if limit > v.config.MaxLimit {
+		v.AddError("limit", fmt.Sprintf("must not exceed %d", v.config.MaxLimit), CodeInvalidValue)
+		return false
+	}
+	return true
+}
+
+// ValidateOffset validates the offset parameter.
+func (v *PaginationValidator) ValidateOffset(offset int) bool {
+	if offset < 0 {
+		v.AddError("offset", "must not be negative", CodeInvalidValue)
+		return false
+	}
+	if offset > v.config.MaxOffset {
+		v.AddError("offset", fmt.Sprintf("must not exceed %d", v.config.MaxOffset), CodeInvalidValue)
+		return false
+	}
+	return true
+}
+
+// Validate validates both limit and offset.
+func (v *PaginationValidator) Validate(limit, offset int) bool {
+	limitOk := v.ValidateLimit(limit)
+	offsetOk := v.ValidateOffset(offset)
+	return limitOk && offsetOk
+}
