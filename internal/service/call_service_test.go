@@ -18,7 +18,7 @@ func newTestCallService() (*CallService, *MockCallRepository, *MockQuoteGenerato
 	mockRepo := NewMockCallRepository()
 	mockQuoteGen := NewMockQuoteGenerator()
 	// Pass nil for job processor - tests use legacy async generation
-	service := NewCallService(mockRepo, mockQuoteGen, nil, logger, nil)
+	service := NewCallService(mockRepo, mockQuoteGen, nil, nil, logger, nil)
 	return service, mockRepo, mockQuoteGen
 }
 

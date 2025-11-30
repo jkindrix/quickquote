@@ -112,6 +112,7 @@ func main() {
 	csrfRepo := repository.NewCSRFRepository(db.Pool)
 	promptRepo := repository.NewPromptRepository(db.Pool)
 	settingsRepo := repository.NewSettingsRepository(db.Pool)
+	idempotencyRepo := repository.NewIdempotencyRepository(db.Pool, logger)
 
 	// Initialize Bland entity repositories (for local caching)
 	knowledgeBaseRepo := repository.NewKnowledgeBaseRepository(db.Pool)
@@ -159,7 +160,7 @@ func main() {
 	)
 
 	// Initialize services
-	callService := service.NewCallService(callRepo, claudeClient, jobProcessor, logger, appMetrics)
+	callService := service.NewCallService(callRepo, claudeClient, jobProcessor, quoteLimiter, logger, appMetrics)
 
 	// Initialize settings service (needed by BlandService)
 	settingsService := service.NewSettingsService(settingsRepo, logger)
@@ -179,6 +180,7 @@ func main() {
 		promptRepo,
 		settingsService,
 		webhookURL,
+		idempotencyRepo,
 		logger,
 	)
 	logger.Info("initialized Bland service", zap.String("webhook_url", webhookURL))
@@ -274,7 +276,7 @@ func main() {
 	r.Use(appMetrics.Middleware)
 
 	// CSRF protection (skip webhook endpoints and API routes)
-	r.Use(csrfProtection.SkipPath("/webhook/bland", "/health", "/ready", "/live", "/api/", "/metrics"))
+	r.Use(csrfProtection.SkipPath("/webhook/bland", "/health", "/ready", "/live", "/metrics"))
 
 	// Serve static files
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))))
@@ -307,20 +309,18 @@ func main() {
 		r.Handle("/admin/log-level", logLevelHandler)
 	})
 
-	// Register API v1 routes with JSON body limits
-	apiRouter := chi.NewRouter()
-	apiRouter.Use(middleware.BodySizeLimiterJSON())
-	callAPIHandler.RegisterRoutes(apiRouter)
-	promptAPIHandler.RegisterRoutes(apiRouter)
-	blandAPIHandler.RegisterRoutes(apiRouter)
-	r.Mount("/api/v1", apiRouter)
-	logger.Info("registered API v1 routes",
-		zap.Strings("endpoints", []string{
-			"/api/v1/calls/*",
-			"/api/v1/prompts/*",
-			"/api/v1/bland/*",
-		}),
-	)
+	// Authenticated API routes (JSON responses, no redirects)
+	r.Group(func(r chi.Router) {
+		r.Use(authHandler.APIAuthMiddleware)
+		r.Use(middleware.UserRateLimit(userRateLimiter, logger, appMetrics))
+
+		apiRouter := chi.NewRouter()
+		apiRouter.Use(middleware.BodySizeLimiterJSON())
+		callAPIHandler.RegisterRoutes(apiRouter)
+		promptAPIHandler.RegisterRoutes(apiRouter)
+		blandAPIHandler.RegisterRoutes(apiRouter)
+		r.Mount("/api/v1", apiRouter)
+	})
 
 	// Create server
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
@@ -391,6 +391,28 @@ func main() {
 	}()
 	shutdownCoord.RegisterFunc(shutdown.PhaseCleanup, "user-rate-limit-cleanup", func(ctx context.Context) error {
 		close(rateLimitCleanupStop)
+		return nil
+	})
+
+	idempotencyCleanupStop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(6 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				if err := idempotencyRepo.CleanupExpired(cleanupCtx); err != nil {
+					logger.Warn("failed to cleanup idempotency keys", zap.Error(err))
+				}
+				cancel()
+			case <-idempotencyCleanupStop:
+				return
+			}
+		}
+	}()
+	shutdownCoord.RegisterFunc(shutdown.PhaseCleanup, "idempotency-cleanup", func(ctx context.Context) error {
+		close(idempotencyCleanupStop)
 		return nil
 	})
 

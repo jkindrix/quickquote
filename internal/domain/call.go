@@ -22,25 +22,29 @@ const (
 
 // Call represents a phone call record.
 type Call struct {
-	ID              uuid.UUID         `json:"id"`
-	ProviderCallID  string            `json:"provider_call_id"` // ID from voice provider (Bland, Vapi, Retell, etc.)
-	Provider        string            `json:"provider"`         // Provider type: "bland", "vapi", "retell", etc.
-	PhoneNumber     string            `json:"phone_number"`     // Number that received the call (to)
-	FromNumber      string            `json:"from_number"`      // Caller's number
-	CallerName      *string           `json:"caller_name,omitempty"`
-	Status          CallStatus        `json:"status"`
-	StartedAt       *time.Time        `json:"started_at,omitempty"`
-	EndedAt         *time.Time        `json:"ended_at,omitempty"`
-	DurationSeconds *int              `json:"duration_seconds,omitempty"`
-	Transcript      *string           `json:"transcript,omitempty"`
-	TranscriptJSON  []TranscriptEntry `json:"transcript_json,omitempty"`
-	RecordingURL    *string           `json:"recording_url,omitempty"`
-	QuoteSummary    *string           `json:"quote_summary,omitempty"`
-	ExtractedData   *ExtractedData    `json:"extracted_data,omitempty"`
-	ErrorMessage    *string           `json:"error_message,omitempty"`
-	CreatedAt       time.Time         `json:"created_at"`
-	UpdatedAt       time.Time         `json:"updated_at"`
-	DeletedAt       *time.Time        `json:"deleted_at,omitempty"`
+	ID                  uuid.UUID              `json:"id"`
+	ProviderCallID      string                 `json:"provider_call_id"` // ID from voice provider (Bland, Vapi, Retell, etc.)
+	Provider            string                 `json:"provider"`         // Provider type: "bland", "vapi", "retell", etc.
+	PhoneNumber         string                 `json:"phone_number"`     // Number that received the call (to)
+	FromNumber          string                 `json:"from_number"`      // Caller's number
+	CallerName          *string                `json:"caller_name,omitempty"`
+	Status              CallStatus             `json:"status"`
+	StartedAt           *time.Time             `json:"started_at,omitempty"`
+	EndedAt             *time.Time             `json:"ended_at,omitempty"`
+	DurationSeconds     *int                   `json:"duration_seconds,omitempty"`
+	Transcript          *string                `json:"transcript,omitempty"`
+	TranscriptJSON      []TranscriptEntry      `json:"transcript_json,omitempty"`
+	RecordingURL        *string                `json:"recording_url,omitempty"`
+	QuoteSummary        *string                `json:"quote_summary,omitempty"`
+	ExtractedData       *ExtractedData         `json:"extracted_data,omitempty"`
+	ErrorMessage        *string                `json:"error_message,omitempty"`
+	ProviderSummary     *string                `json:"provider_summary,omitempty"`
+	ProviderDisposition *string                `json:"provider_disposition,omitempty"`
+	ProviderMetadata    map[string]interface{} `json:"provider_metadata,omitempty"`
+	QuoteJobID          *uuid.UUID             `json:"quote_job_id,omitempty"`
+	CreatedAt           time.Time              `json:"created_at"`
+	UpdatedAt           time.Time              `json:"updated_at"`
+	DeletedAt           *time.Time             `json:"deleted_at,omitempty"`
 }
 
 // IsDeleted returns true if the call has been soft-deleted.
@@ -64,12 +68,17 @@ type TranscriptEntry struct {
 
 // ExtractedData holds structured data extracted from the call.
 type ExtractedData struct {
-	ProjectType       string `json:"project_type,omitempty"`
-	Requirements      string `json:"requirements,omitempty"`
-	Timeline          string `json:"timeline,omitempty"`
-	BudgetRange       string `json:"budget_range,omitempty"`
-	ContactPreference string `json:"contact_preference,omitempty"`
-	CallerName        string `json:"caller_name,omitempty"`
+	ProjectType       string                 `json:"project_type,omitempty"`
+	Requirements      string                 `json:"requirements,omitempty"`
+	Timeline          string                 `json:"timeline,omitempty"`
+	BudgetRange       string                 `json:"budget_range,omitempty"`
+	ContactPreference string                 `json:"contact_preference,omitempty"`
+	CallerName        string                 `json:"caller_name,omitempty"`
+	Email             string                 `json:"email,omitempty"`
+	Phone             string                 `json:"phone,omitempty"`
+	Company           string                 `json:"company,omitempty"`
+	AdditionalInfo    string                 `json:"additional_info,omitempty"`
+	Custom            map[string]interface{} `json:"custom,omitempty"`
 }
 
 // NewCall creates a new Call with default values.

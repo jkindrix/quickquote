@@ -26,6 +26,9 @@ type CallRepository interface {
 
 	// Count returns the total number of calls for the provided filter.
 	Count(ctx context.Context, filter *CallListFilter) (int, error)
+
+	// SetQuoteJobID associates the latest quote job ID with the call.
+	SetQuoteJobID(ctx context.Context, callID uuid.UUID, jobID *uuid.UUID) error
 }
 
 // UserRepository defines the interface for user data persistence.

@@ -94,6 +94,34 @@ func (h *AuthHandler) Middleware(next http.Handler) http.Handler {
 	})
 }
 
+// APIAuthMiddleware enforces authentication for JSON APIs without redirects.
+func (h *AuthHandler) APIAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie("session_token")
+		if err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		result, err := h.authService.ValidateAndRefreshSession(r.Context(), cookie.Value)
+		if err != nil {
+			h.logger.Debug("invalid API session", zap.Error(err))
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		if result.NewToken != "" {
+			h.setSessionCookie(w, r, result.NewToken, 86400*7)
+		}
+
+		ctx := context.WithValue(r.Context(), userContextKey, result.User)
+		if result.User != nil {
+			ctx = middleware.WithUserID(ctx, result.User.ID)
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 // HandleIndex redirects to dashboard or login based on auth status.
 func (h *AuthHandler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("session_token")

@@ -13,6 +13,7 @@ import (
 	"github.com/jkindrix/quickquote/internal/domain"
 	apperrors "github.com/jkindrix/quickquote/internal/errors"
 	"github.com/jkindrix/quickquote/internal/metrics"
+	"github.com/jkindrix/quickquote/internal/ratelimit"
 	"github.com/jkindrix/quickquote/internal/voiceprovider"
 )
 
@@ -21,6 +22,7 @@ type CallService struct {
 	callRepo     domain.CallRepository
 	quoteGen     QuoteGenerator
 	jobProcessor *QuoteJobProcessor
+	quoteLimiter *ratelimit.QuoteLimiter
 	logger       *zap.Logger
 	metrics      *metrics.Metrics
 }
@@ -35,6 +37,7 @@ func NewCallService(
 	callRepo domain.CallRepository,
 	quoteGen QuoteGenerator,
 	jobProcessor *QuoteJobProcessor,
+	quoteLimiter *ratelimit.QuoteLimiter,
 	logger *zap.Logger,
 	metrics *metrics.Metrics,
 ) *CallService {
@@ -42,6 +45,7 @@ func NewCallService(
 		callRepo:     callRepo,
 		quoteGen:     quoteGen,
 		jobProcessor: jobProcessor,
+		quoteLimiter: quoteLimiter,
 		logger:       logger,
 		metrics:      metrics,
 	}
@@ -91,12 +95,21 @@ func (s *CallService) ProcessCallEvent(ctx context.Context, event *voiceprovider
 	// Enqueue quote generation job if call completed successfully with transcript
 	if call.Status == domain.CallStatusCompleted && call.Transcript != nil && *call.Transcript != "" {
 		if s.jobProcessor != nil {
-			if _, err := s.jobProcessor.EnqueueJob(ctx, call.ID); err != nil {
+			job, err := s.jobProcessor.EnqueueJob(ctx, call.ID)
+			if err != nil {
 				s.logger.Error("failed to enqueue quote job",
 					zap.String("call_id", call.ID.String()),
 					zap.Error(err),
 				)
 				// Don't fail the whole request, quote will need manual retry
+			} else if job != nil {
+				jobID := job.ID
+				if err := s.callRepo.SetQuoteJobID(ctx, call.ID, &jobID); err != nil && !apperrors.IsNotFound(err) {
+					s.logger.Warn("failed to set quote job id",
+						zap.String("call_id", call.ID.String()),
+						zap.Error(err),
+					)
+				}
 			}
 		} else {
 			// Log warning - job processor should always be configured in production
@@ -168,12 +181,31 @@ func (s *CallService) updateCallFromEvent(call *domain.Call, event *voiceprovide
 			BudgetRange:       event.ExtractedData.BudgetRange,
 			ContactPreference: event.ExtractedData.ContactPreference,
 			CallerName:        event.ExtractedData.CallerName,
+			Email:             event.ExtractedData.Email,
+			Phone:             event.ExtractedData.Phone,
+			Company:           event.ExtractedData.Company,
+			AdditionalInfo:    event.ExtractedData.AdditionalInfo,
+			Custom:            event.ExtractedData.Custom,
 		}
 
 		// Update caller name from extracted data if not already set
 		if call.CallerName == nil && event.ExtractedData.CallerName != "" {
 			call.CallerName = &event.ExtractedData.CallerName
 		}
+	}
+
+	// Update provider summary/disposition
+	if event.Summary != "" {
+		summary := event.Summary
+		call.ProviderSummary = &summary
+	}
+	if event.Disposition != "" {
+		disposition := event.Disposition
+		call.ProviderDisposition = &disposition
+	}
+
+	if len(event.RawMetadata) > 0 {
+		call.ProviderMetadata = event.RawMetadata
 	}
 
 	// Update status
@@ -192,6 +224,8 @@ func (s *CallService) mapProviderStatus(status voiceprovider.CallStatus) domain.
 		return domain.CallStatusCompleted
 	case voiceprovider.CallStatusFailed:
 		return domain.CallStatusFailed
+	case voiceprovider.CallStatusTransferred:
+		return domain.CallStatusCompleted
 	case voiceprovider.CallStatusNoAnswer, voiceprovider.CallStatusVoicemail:
 		return domain.CallStatusNoAnswer
 	case voiceprovider.CallStatusInProgress:
@@ -210,6 +244,13 @@ func (s *CallService) GenerateQuote(ctx context.Context, callID uuid.UUID) (*dom
 
 	if call.Transcript == nil || *call.Transcript == "" {
 		return nil, errors.New("call has no transcript")
+	}
+
+	if s.quoteLimiter != nil {
+		if err := s.quoteLimiter.Acquire(ctx); err != nil {
+			return nil, fmt.Errorf("quote generation rate limited: %w", err)
+		}
+		defer s.quoteLimiter.Release()
 	}
 
 	s.logger.Info("generating quote", zap.String("call_id", callID.String()))
@@ -231,6 +272,13 @@ func (s *CallService) GenerateQuote(ctx context.Context, callID uuid.UUID) (*dom
 
 	if s.metrics != nil {
 		s.metrics.RecordQuoteGeneration(true, time.Since(start))
+	}
+
+	if err := s.callRepo.SetQuoteJobID(ctx, call.ID, nil); err != nil && !apperrors.IsNotFound(err) {
+		s.logger.Debug("failed to clear quote job id after manual generation",
+			zap.String("call_id", callID.String()),
+			zap.Error(err),
+		)
 	}
 
 	s.logger.Info("quote generated successfully", zap.String("call_id", callID.String()))

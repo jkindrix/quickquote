@@ -42,14 +42,21 @@ func (r *CallRepository) Create(ctx context.Context, call *domain.Call) error {
 		return apperrors.Wrap(err, "CallRepository.Create", apperrors.CodeInternal, "failed to marshal extracted data")
 	}
 
+	providerMetadataJSON, err := json.Marshal(call.ProviderMetadata)
+	if err != nil {
+		return apperrors.Wrap(err, "CallRepository.Create", apperrors.CodeInternal, "failed to marshal provider metadata")
+	}
+
 	query := `
 		INSERT INTO calls (
 			id, provider_call_id, provider, phone_number, from_number, caller_name,
 			status, started_at, ended_at, duration_seconds, transcript,
 			transcript_json, recording_url, quote_summary, extracted_data,
-			error_message, created_at, updated_at
+			error_message, provider_summary, provider_disposition, provider_metadata,
+			quote_job_id, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+			$17, $18, $19, $20, $21
 		)`
 
 	_, err = r.pool.Exec(ctx, query,
@@ -69,6 +76,10 @@ func (r *CallRepository) Create(ctx context.Context, call *domain.Call) error {
 		call.QuoteSummary,
 		extractedDataJSON,
 		call.ErrorMessage,
+		call.ProviderSummary,
+		call.ProviderDisposition,
+		providerMetadataJSON,
+		call.QuoteJobID,
 		call.CreatedAt,
 		call.UpdatedAt,
 	)
@@ -89,7 +100,8 @@ func (r *CallRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Cal
 			id, provider_call_id, provider, phone_number, from_number, caller_name,
 			status, started_at, ended_at, duration_seconds, transcript,
 			transcript_json, recording_url, quote_summary, extracted_data,
-			error_message, created_at, updated_at, deleted_at
+			error_message, provider_summary, provider_disposition, provider_metadata,
+			quote_job_id, created_at, updated_at, deleted_at
 		FROM calls
 		WHERE id = $1 AND deleted_at IS NULL`
 
@@ -106,7 +118,8 @@ func (r *CallRepository) GetByProviderCallID(ctx context.Context, providerCallID
 			id, provider_call_id, provider, phone_number, from_number, caller_name,
 			status, started_at, ended_at, duration_seconds, transcript,
 			transcript_json, recording_url, quote_summary, extracted_data,
-			error_message, created_at, updated_at, deleted_at
+			error_message, provider_summary, provider_disposition, provider_metadata,
+			quote_job_id, created_at, updated_at, deleted_at
 		FROM calls
 		WHERE provider_call_id = $1 AND deleted_at IS NULL`
 
@@ -130,6 +143,11 @@ func (r *CallRepository) Update(ctx context.Context, call *domain.Call) error {
 		return apperrors.Wrap(err, "CallRepository.Update", apperrors.CodeInternal, "failed to marshal extracted data")
 	}
 
+	providerMetadataJSON, err := json.Marshal(call.ProviderMetadata)
+	if err != nil {
+		return apperrors.Wrap(err, "CallRepository.Update", apperrors.CodeInternal, "failed to marshal provider metadata")
+	}
+
 	query := `
 		UPDATE calls SET
 			provider = $2,
@@ -146,8 +164,12 @@ func (r *CallRepository) Update(ctx context.Context, call *domain.Call) error {
 			quote_summary = $13,
 			extracted_data = $14,
 			error_message = $15,
-			updated_at = $16,
-			deleted_at = $17
+			provider_summary = $16,
+			provider_disposition = $17,
+			provider_metadata = $18,
+			quote_job_id = $19,
+			updated_at = $20,
+			deleted_at = $21
 		WHERE id = $1 AND deleted_at IS NULL`
 
 	result, err := r.pool.Exec(ctx, query,
@@ -166,6 +188,10 @@ func (r *CallRepository) Update(ctx context.Context, call *domain.Call) error {
 		call.QuoteSummary,
 		extractedDataJSON,
 		call.ErrorMessage,
+		call.ProviderSummary,
+		call.ProviderDisposition,
+		providerMetadataJSON,
+		call.QuoteJobID,
 		call.UpdatedAt,
 		call.DeletedAt,
 	)
@@ -204,6 +230,23 @@ func (r *CallRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// SetQuoteJobID assigns the latest quote job to a call.
+func (r *CallRepository) SetQuoteJobID(ctx context.Context, callID uuid.UUID, jobID *uuid.UUID) error {
+	ctx, cancel := WithWriteTimeout(ctx)
+	defer cancel()
+
+	query := `
+		UPDATE calls
+		SET quote_job_id = $2,
+		    updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL`
+
+	if _, err := r.pool.Exec(ctx, query, callID, jobID); err != nil {
+		return apperrors.DatabaseError("CallRepository.SetQuoteJobID", err)
+	}
+	return nil
+}
+
 // List retrieves calls with pagination, ordered by creation time descending (excludes soft-deleted).
 func (r *CallRepository) List(ctx context.Context, filter *domain.CallListFilter, limit, offset int) ([]*domain.Call, error) {
 	ctx, cancel := WithListQueryTimeout(ctx)
@@ -214,7 +257,8 @@ func (r *CallRepository) List(ctx context.Context, filter *domain.CallListFilter
 			id, provider_call_id, provider, phone_number, from_number, caller_name,
 			status, started_at, ended_at, duration_seconds, transcript,
 			transcript_json, recording_url, quote_summary, extracted_data,
-			error_message, created_at, updated_at, deleted_at
+			error_message, provider_summary, provider_disposition, provider_metadata,
+			quote_job_id, created_at, updated_at, deleted_at
 		FROM calls`
 
 	whereClause, args := buildCallFilter(filter)
@@ -249,7 +293,7 @@ func (r *CallRepository) Count(ctx context.Context, filter *domain.CallListFilte
 // scanCall scans a single call from a query.
 func (r *CallRepository) scanCall(ctx context.Context, query string, args ...interface{}) (*domain.Call, error) {
 	call := &domain.Call{}
-	var transcriptJSON, extractedDataJSON []byte
+	var transcriptJSON, extractedDataJSON, providerMetadataJSON []byte
 
 	err := r.pool.QueryRow(ctx, query, args...).Scan(
 		&call.ID,
@@ -268,6 +312,10 @@ func (r *CallRepository) scanCall(ctx context.Context, query string, args ...int
 		&call.QuoteSummary,
 		&extractedDataJSON,
 		&call.ErrorMessage,
+		&call.ProviderSummary,
+		&call.ProviderDisposition,
+		&providerMetadataJSON,
+		&call.QuoteJobID,
 		&call.CreatedAt,
 		&call.UpdatedAt,
 		&call.DeletedAt,
@@ -292,6 +340,14 @@ func (r *CallRepository) scanCall(ctx context.Context, query string, args ...int
 		}
 	}
 
+	if len(providerMetadataJSON) > 0 {
+		var metadata map[string]interface{}
+		if err := json.Unmarshal(providerMetadataJSON, &metadata); err != nil {
+			return nil, apperrors.Wrap(err, "CallRepository.scanCall", apperrors.CodeInternal, "failed to unmarshal provider metadata")
+		}
+		call.ProviderMetadata = metadata
+	}
+
 	return call, nil
 }
 
@@ -306,7 +362,7 @@ func (r *CallRepository) scanCalls(ctx context.Context, query string, args ...in
 	var calls []*domain.Call
 	for rows.Next() {
 		call := &domain.Call{}
-		var transcriptJSON, extractedDataJSON []byte
+		var transcriptJSON, extractedDataJSON, providerMetadataJSON []byte
 
 		err := rows.Scan(
 			&call.ID,
@@ -325,6 +381,10 @@ func (r *CallRepository) scanCalls(ctx context.Context, query string, args ...in
 			&call.QuoteSummary,
 			&extractedDataJSON,
 			&call.ErrorMessage,
+			&call.ProviderSummary,
+			&call.ProviderDisposition,
+			&providerMetadataJSON,
+			&call.QuoteJobID,
 			&call.CreatedAt,
 			&call.UpdatedAt,
 			&call.DeletedAt,
@@ -344,6 +404,14 @@ func (r *CallRepository) scanCalls(ctx context.Context, query string, args ...in
 			if err := json.Unmarshal(extractedDataJSON, call.ExtractedData); err != nil {
 				return nil, apperrors.Wrap(err, "CallRepository.scanCalls", apperrors.CodeInternal, "failed to unmarshal extracted data")
 			}
+		}
+
+		if len(providerMetadataJSON) > 0 {
+			var metadata map[string]interface{}
+			if err := json.Unmarshal(providerMetadataJSON, &metadata); err != nil {
+				return nil, apperrors.Wrap(err, "CallRepository.scanCalls", apperrors.CodeInternal, "failed to unmarshal provider metadata")
+			}
+			call.ProviderMetadata = metadata
 		}
 
 		calls = append(calls, call)

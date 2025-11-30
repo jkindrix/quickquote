@@ -247,6 +247,8 @@ docker exec -i quickquote-db psql -U quickquote -d quickquote < backup.sql
 | `/webhook/vapi` | POST | Vapi webhook |
 | `/webhook/retell` | POST | Retell webhook |
 
+> **Security note:** All `/api/v1/*` routes now require an authenticated dashboard session (or future API token) and enforce CSRF protection. Browser-based tools automatically send the `csrf_token` cookie/header combination; API clients must do the same when making state-changing requests.
+
 ## Environment Variables
 
 ### Core Configuration

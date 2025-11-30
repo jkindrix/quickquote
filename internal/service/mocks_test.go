@@ -24,6 +24,7 @@ type MockCallRepository struct {
 	GetByProviderIDCalls int
 	ListCalls            int
 	CountCalls           int
+	SetQuoteJobIDCalls   int
 
 	// For injecting errors
 	CreateError          error
@@ -32,6 +33,7 @@ type MockCallRepository struct {
 	GetByProviderIDError error
 	ListError            error
 	CountError           error
+	SetQuoteJobIDError   error
 }
 
 func NewMockCallRepository() *MockCallRepository {
@@ -156,6 +158,20 @@ func (m *MockCallRepository) Count(ctx context.Context, filter *domain.CallListF
 		count++
 	}
 	return count, nil
+}
+
+func (m *MockCallRepository) SetQuoteJobID(ctx context.Context, callID uuid.UUID, jobID *uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.SetQuoteJobIDCalls++
+	if m.SetQuoteJobIDError != nil {
+		return m.SetQuoteJobIDError
+	}
+	if call, ok := m.calls[callID]; ok {
+		call.QuoteJobID = jobID
+		return nil
+	}
+	return apperrors.NotFound("call")
 }
 
 // MockQuoteGenerator is a mock implementation of QuoteGenerator for testing.

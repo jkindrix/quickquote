@@ -53,11 +53,43 @@
                     {{if .Call.ExtractedData.ContactPreference}}
                     <p><strong>Contact Preference:</strong> {{.Call.ExtractedData.ContactPreference}}</p>
                     {{end}}
+                    {{if .Call.ExtractedData.Email}}
+                    <p><strong>Email:</strong> {{.Call.ExtractedData.Email}}</p>
+                    {{end}}
+                    {{if .Call.ExtractedData.Phone}}
+                    <p><strong>Phone:</strong> {{.Call.ExtractedData.Phone}}</p>
+                    {{end}}
+                    {{if .Call.ExtractedData.Company}}
+                    <p><strong>Company:</strong> {{.Call.ExtractedData.Company}}</p>
+                    {{end}}
+                    {{if .Call.ExtractedData.AdditionalInfo}}
+                    <p><strong>Additional Info:</strong> {{.Call.ExtractedData.AdditionalInfo}}</p>
+                    {{end}}
                 {{else}}
                 <p>No extracted data available</p>
                 {{end}}
             </div>
         </div>
+    </div>
+
+    <div class="card">
+        <h2>Provider Insights</h2>
+        <div class="info-list">
+            {{if .Call.ProviderSummary}}
+            <p><strong>Summary:</strong> {{.Call.ProviderSummary}}</p>
+            {{else}}
+            <p><strong>Summary:</strong> Not provided</p>
+            {{end}}
+            {{if .Call.ProviderDisposition}}
+            <p><strong>Disposition:</strong> {{.Call.ProviderDisposition}}</p>
+            {{end}}
+        </div>
+        {{if .Call.ProviderMetadata}}
+        <details style="margin-top: 1rem;">
+            <summary>Raw Provider Metadata</summary>
+            <pre style="margin-top: 0.5rem;">{{printf "%+v" .Call.ProviderMetadata}}</pre>
+        </details>
+        {{end}}
     </div>
 
     <div class="card">

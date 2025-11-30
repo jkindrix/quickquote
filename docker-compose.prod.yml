@@ -27,6 +27,7 @@ services:
       - BLAND_API_KEY=${BLAND_API_KEY}
       - BLAND_INBOUND_NUMBER=${BLAND_INBOUND_NUMBER}
       - BLAND_WEBHOOK_SECRET=${BLAND_WEBHOOK_SECRET:-}
+      - VOICE_PROVIDER_BLAND_WEBHOOK_SECRET=${VOICE_PROVIDER_BLAND_WEBHOOK_SECRET:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - SESSION_SECRET=${SESSION_SECRET}
       - ADMIN_EMAIL=${ADMIN_EMAIL:-}
@@ -36,6 +37,7 @@ services:
       - WEBHOOK_BASE_URL=https://quickquote.jdok.dev
       - LOG_LEVEL=info
       - LOG_FORMAT=json
+      - CALL_BUSINESS_NAME=${CALL_BUSINESS_NAME}
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=web"

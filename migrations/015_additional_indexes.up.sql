@@ -21,8 +21,7 @@ WHERE deleted_at IS NULL;
 -- Sessions: Composite index for session validation queries
 -- The most common query is: SELECT ... WHERE expires_at > NOW() AND (token = $1 OR previous_token = $1)
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_active
-ON sessions(expires_at)
-WHERE expires_at > NOW() - INTERVAL '1 hour';
+ON sessions(expires_at);
 
 -- Quote jobs: Index for pending jobs ready to process
 CREATE INDEX IF NOT EXISTS idx_quote_jobs_ready
@@ -31,8 +30,7 @@ WHERE status = 'pending';
 
 -- CSRF tokens: Composite index for valid token lookup
 CREATE INDEX IF NOT EXISTS idx_csrf_tokens_valid
-ON csrf_tokens(token)
-WHERE expires_at > NOW() AND NOT used;
+ON csrf_tokens(token, expires_at, used);
 
 -- Knowledge bases: Index for active knowledge bases
 CREATE INDEX IF NOT EXISTS idx_knowledge_bases_active

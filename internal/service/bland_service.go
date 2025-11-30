@@ -13,6 +13,7 @@ import (
 
 	"github.com/jkindrix/quickquote/internal/bland"
 	"github.com/jkindrix/quickquote/internal/domain"
+	"github.com/jkindrix/quickquote/internal/repository"
 )
 
 // idempotencyEntry stores a cached response for an idempotency key.
@@ -78,6 +79,72 @@ func (c *idempotencyCache) Cleanup() {
 	}
 }
 
+func (s *BlandService) getCachedResponse(ctx context.Context, key string) (*InitiateCallResponse, bool) {
+	if key == "" {
+		return nil, false
+	}
+
+	if cached, ok := s.idempotencyCache.Get(key); ok {
+		s.logger.Info("returning cached response for idempotency key",
+			zap.String("idempotency_key", key),
+			zap.String("call_id", cached.CallID.String()),
+		)
+		return cached, true
+	}
+
+	if s.idempotencyRepo != nil {
+		payload, err := s.idempotencyRepo.Get(ctx, key)
+		if err != nil {
+			s.logger.Warn("failed to load idempotency key from store",
+				zap.String("idempotency_key", key),
+				zap.Error(err),
+			)
+			return nil, false
+		}
+		if payload != nil {
+			var resp InitiateCallResponse
+			if err := json.Unmarshal(payload, &resp); err != nil {
+				s.logger.Warn("failed to decode cached response",
+					zap.String("idempotency_key", key),
+					zap.Error(err),
+				)
+				return nil, false
+			}
+			// Warm in-memory cache for quick reuse
+			s.idempotencyCache.Set(key, &resp)
+			return &resp, true
+		}
+	}
+
+	return nil, false
+}
+
+func (s *BlandService) cacheResponse(ctx context.Context, key string, resp *InitiateCallResponse) {
+	if key == "" || resp == nil {
+		return
+	}
+
+	s.idempotencyCache.Set(key, resp)
+
+	if s.idempotencyRepo != nil {
+		payload, err := json.Marshal(resp)
+		if err != nil {
+			s.logger.Warn("failed to marshal idempotency response",
+				zap.String("idempotency_key", key),
+				zap.Error(err),
+			)
+			return
+		}
+		expiresAt := time.Now().Add(IdempotencyKeyTTL)
+		if err := s.idempotencyRepo.Save(ctx, key, payload, expiresAt); err != nil {
+			s.logger.Warn("failed to persist idempotency response",
+				zap.String("idempotency_key", key),
+				zap.Error(err),
+			)
+		}
+	}
+}
+
 // BlandService handles voice call initiation and management via Bland AI.
 type BlandService struct {
 	blandClient     *bland.Client
@@ -89,6 +156,7 @@ type BlandService struct {
 
 	// Idempotency cache for preventing duplicate calls
 	idempotencyCache *idempotencyCache
+	idempotencyRepo  *repository.IdempotencyRepository
 }
 
 // IdempotencyKeyTTL is the duration for which idempotency keys are cached.
@@ -101,6 +169,7 @@ func NewBlandService(
 	promptRepo domain.PromptRepository,
 	settingsService *SettingsService,
 	webhookURL string,
+	idempotencyRepo *repository.IdempotencyRepository,
 	logger *zap.Logger,
 ) *BlandService {
 	return &BlandService{
@@ -111,6 +180,7 @@ func NewBlandService(
 		webhookURL:       webhookURL,
 		logger:           logger,
 		idempotencyCache: newIdempotencyCache(IdempotencyKeyTTL),
+		idempotencyRepo:  idempotencyRepo,
 	}
 }
 
@@ -160,12 +230,12 @@ type InitiateCallRequest struct {
 
 // InitiateCallResponse contains the result of initiating a call.
 type InitiateCallResponse struct {
-	CallID         uuid.UUID `json:"call_id"`
-	BlandCallID    string    `json:"bland_call_id"`
-	Status         string    `json:"status"`
-	PhoneNumber    string    `json:"phone_number"`
-	PromptID       *uuid.UUID `json:"prompt_id,omitempty"`
-	PromptName     string    `json:"prompt_name,omitempty"`
+	CallID      uuid.UUID  `json:"call_id"`
+	BlandCallID string     `json:"bland_call_id"`
+	Status      string     `json:"status"`
+	PhoneNumber string     `json:"phone_number"`
+	PromptID    *uuid.UUID `json:"prompt_id,omitempty"`
+	PromptName  string     `json:"prompt_name,omitempty"`
 }
 
 // InitiateCall starts a new outbound call via Bland AI.
@@ -253,10 +323,7 @@ func (s *BlandService) InitiateCall(ctx context.Context, req *InitiateCallReques
 		PromptName:  promptName,
 	}
 
-	// Cache the response for idempotency
-	if req.IdempotencyKey != "" {
-		s.idempotencyCache.Set(req.IdempotencyKey, response)
-	}
+	s.cacheResponse(ctx, req.IdempotencyKey, response)
 
 	return response, nil
 }
