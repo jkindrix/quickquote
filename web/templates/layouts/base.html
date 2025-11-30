@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.Title}} - QuickQuote</title>
     <script src="/static/js/htmx.min.js"></script>
-    <link rel="stylesheet" href="/static/css/styles.css">
+    <link rel="stylesheet" href="/static/css/styles.css{{if .AssetVersion}}?v={{.AssetVersion}}{{end}}">
     {{block "head" .}}{{end}}
 </head>
 <body{{block "bodyclass" .}}{{end}}>

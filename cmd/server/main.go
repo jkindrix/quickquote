@@ -208,11 +208,20 @@ func main() {
 		logger.Warn("failed to initialize template engine, using inline templates", zap.Error(err))
 	}
 
+	assetVersion := os.Getenv("ASSET_VERSION")
+	if assetVersion == "" {
+		assetVersion = Version
+	}
+	if assetVersion == "" || assetVersion == "dev" {
+		assetVersion = fmt.Sprintf("%s-%d", Version, time.Now().Unix())
+	}
+
 	// Initialize focused handlers with constructor injection
 	baseHandlerCfg := handler.BaseHandlerConfig{
 		TemplateEngine: templateEngine,
 		CSRFProtection: csrfProtection,
 		Logger:         logger,
+		AssetVersion:   assetVersion,
 	}
 
 	// Auth handler for login/logout/session management

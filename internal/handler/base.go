@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -44,6 +45,7 @@ type BaseHandler struct {
 	templateEngine *TemplateEngine
 	csrfProtection *middleware.CSRFProtection
 	logger         *zap.Logger
+	assetVersion   string
 }
 
 // BaseHandlerConfig holds configuration for BaseHandler.
@@ -51,6 +53,7 @@ type BaseHandlerConfig struct {
 	TemplateEngine *TemplateEngine
 	CSRFProtection *middleware.CSRFProtection
 	Logger         *zap.Logger
+	AssetVersion   string
 }
 
 // NewBaseHandler creates a new BaseHandler with all required dependencies.
@@ -58,10 +61,16 @@ func NewBaseHandler(cfg BaseHandlerConfig) *BaseHandler {
 	if cfg.Logger == nil {
 		panic("logger is required")
 	}
+
+	assetVersion := cfg.AssetVersion
+	if assetVersion == "" {
+		assetVersion = fmt.Sprintf("%d", time.Now().Unix())
+	}
 	return &BaseHandler{
 		templateEngine: cfg.TemplateEngine,
 		csrfProtection: cfg.CSRFProtection,
 		logger:         cfg.Logger,
+		assetVersion:   assetVersion,
 	}
 }
 
@@ -82,6 +91,10 @@ func (b *BaseHandler) RenderTemplate(w http.ResponseWriter, r *http.Request, nam
 	// Add request ID for debugging
 	if reqID := GetRequestIDFromContext(r.Context()); reqID != "" {
 		data["RequestID"] = reqID
+	}
+
+	if _, ok := data["AssetVersion"]; !ok && b.assetVersion != "" {
+		data["AssetVersion"] = b.assetVersion
 	}
 
 	if b.templateEngine != nil && b.templateEngine.HasTemplate(name) {

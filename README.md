@@ -168,6 +168,26 @@ docker exec quickquote-app wget -qO- http://127.0.0.1:8080/health
 docker-compose -f docker-compose.prod.yml down --remove-orphans
 ```
 
+### Static Asset Cache Busting
+
+Browsers and CDNs aggressively cache `/static/css/styles.css`. Each production deploy must include an `ASSET_VERSION` so the HTML references a new URL (e.g. `/static/css/styles.css?v=abc123`).
+
+1. Pick a version identifier (short git SHA or timestamp).
+2. Export it before building:
+   ```bash
+   export ASSET_VERSION=$(git rev-parse --short HEAD)
+   make prod-restart
+   ```
+   If `ASSET_VERSION` is omitted, the server falls back to the embedded build version/timestamp, but setting it explicitly makes rollbacks easier.
+
+### Post-Deploy Verification Checklist
+
+After every deploy (and whenever CSS changes are suspected to be cached):
+
+1. **Health:** `make prod-status` – confirms both containers are healthy and `/health` responds inside the app container.
+2. **Assets:** `curl -s https://quickquote.jdok.dev/static/css/styles.css | head` – verify the response shows the expected `:root` token block and check the HTTP headers (`curl -I …`) to confirm `ETag`/`Last-Modified` updated.
+3. Optionally capture both outputs in the deployment notes for traceability.
+
 ## Operations
 
 ### Database Backup & Restore
