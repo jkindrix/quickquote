@@ -22,32 +22,34 @@
             <h2>Recent Calls</h2>
             <a href="/calls" class="btn btn-secondary">View All</a>
         </div>
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>Caller</th>
-                    <th>Phone</th>
-                    <th>Status</th>
-                    <th>Date</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {{range .Calls}}
-                <tr>
-                    <td>{{if .CallerName}}{{.CallerName}}{{else}}Unknown{{end}}</td>
-                    <td>{{.PhoneNumber}}</td>
-                    <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
-                    <td>{{formatTime .CreatedAt}}</td>
-                    <td><a href="/calls/{{.ID}}" class="btn btn-sm">View</a></td>
-                </tr>
-                {{else}}
-                <tr>
-                    <td colspan="5" style="text-align: center; color: #666;">No calls yet</td>
-                </tr>
-                {{end}}
-            </tbody>
-        </table>
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Caller</th>
+                        <th>Phone</th>
+                        <th>Status</th>
+                        <th>Date</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Calls}}
+                    <tr>
+                        <td>{{if .CallerName}}{{.CallerName}}{{else}}Unknown{{end}}</td>
+                        <td>{{.PhoneNumber}}</td>
+                        <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
+                        <td>{{formatTime .CreatedAt}}</td>
+                        <td><a href="/calls/{{.ID}}" class="btn btn-sm">View</a></td>
+                    </tr>
+                    {{else}}
+                    <tr>
+                        <td colspan="5" class="table-empty">No calls yet</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
     </div>
 </main>
 {{end}}

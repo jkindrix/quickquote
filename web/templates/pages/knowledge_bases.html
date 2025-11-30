@@ -1,116 +1,110 @@
 {{define "content"}}
-<div class="page-header">
-    <h1>Knowledge Bases</h1>
-    <p>Manage knowledge bases for AI agents to reference during calls</p>
-</div>
-
-{{if .Error}}
-<div class="alert alert-error">{{.Error}}</div>
-{{end}}
-
-{{if .Success}}
-<div class="alert alert-success">Knowledge base saved successfully!</div>
-{{end}}
-
-<div class="knowledge-bases-container">
-    <!-- Create New Knowledge Base -->
-    <div class="card create-kb-card">
-        <div class="card-header">
-            <h3>Create Knowledge Base</h3>
-        </div>
-        <div class="card-body">
-            <form method="POST" action="/knowledge-bases/create" class="kb-form">
-                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-
-                <div class="form-group">
-                    <label for="name">Name</label>
-                    <input type="text" id="name" name="name" required
-                           placeholder="e.g., Project FAQs, Pricing Info, Tech Stack">
-                    <small>A descriptive name for this knowledge base</small>
-                </div>
-
-                <div class="form-group">
-                    <label for="description">Description</label>
-                    <input type="text" id="description" name="description"
-                           placeholder="e.g., Common questions about web development projects">
-                    <small>Helps the AI understand when to use this knowledge</small>
-                </div>
-
-                <div class="form-group">
-                    <label for="text">Content</label>
-                    <textarea id="text" name="text" rows="10" required
-                              placeholder="Enter the knowledge content here. This will be vectorized and searchable by the AI agent during calls."></textarea>
-                    <small>The text content to be indexed for retrieval</small>
-                </div>
-
-                <div class="form-actions">
-                    <button type="submit" class="btn btn-primary">Create Knowledge Base</button>
-                </div>
-            </form>
-        </div>
+{{template "navbar" .}}
+<main class="container">
+    <div class="page-header">
+        <h1>Knowledge Bases</h1>
+        <p>Manage knowledge bases for AI agents to reference during calls.</p>
     </div>
 
-    <!-- Existing Knowledge Bases -->
-    <div class="kb-list">
-        <h3>Existing Knowledge Bases ({{len .KnowledgeBases}})</h3>
+    {{if .Error}}
+    <div class="alert alert-error">{{.Error}}</div>
+    {{end}}
 
-        {{if .KnowledgeBases}}
-        <div class="kb-grid">
-            {{range .KnowledgeBases}}
-            <div class="kb-card">
-                <div class="kb-header">
-                    <h4>{{.Name}}</h4>
-                    <span class="kb-id" title="Vector ID">{{.VectorID}}</span>
-                </div>
-                {{if .Description}}
-                <p class="kb-description">{{.Description}}</p>
+    {{if .Success}}
+    <div class="alert alert-success">Knowledge base saved successfully!</div>
+    {{end}}
+
+    <div class="knowledge-layout">
+        <section class="card knowledge-create">
+            <div class="card-header">
+                <h3>Create Knowledge Base</h3>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="/knowledge-bases/create" class="kb-form">
+                    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+
+                    <div class="form-group">
+                        <label for="name">Name</label>
+                        <input type="text" id="name" name="name" required placeholder="e.g., Project FAQs, Pricing Info, Tech Stack">
+                        <small>A descriptive name for this knowledge base</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="description">Description</label>
+                        <input type="text" id="description" name="description" placeholder="e.g., Common questions about web development projects">
+                        <small>Helps the AI understand when to use this knowledge</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="text">Content</label>
+                        <textarea id="text" name="text" rows="10" required placeholder="Enter the knowledge content that should be searchable."></textarea>
+                        <small>The text content that will be vectorized for retrieval</small>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn">Create Knowledge Base</button>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+        <section class="knowledge-list">
+            <div class="list-header">
+                <h3>Existing Knowledge Bases ({{len .KnowledgeBases}})</h3>
+            </div>
+
+            {{if .KnowledgeBases}}
+            <div class="kb-grid">
+                {{range .KnowledgeBases}}
+                <article class="kb-card">
+                    <div class="kb-header">
+                        <h4>{{.Name}}</h4>
+                        <span class="kb-id" title="Vector ID">{{.VectorID}}</span>
+                    </div>
+                    {{if .Description}}
+                    <p class="kb-description">{{.Description}}</p>
+                    {{end}}
+                    <div class="kb-meta">
+                        {{if not .CreatedAt.IsZero}}
+                        <span class="meta-item">
+                            <span class="meta-label">Created:</span> {{formatDate .CreatedAt}}
+                        </span>
+                        {{end}}
+                        {{if not .UpdatedAt.IsZero}}
+                        <span class="meta-item">
+                            <span class="meta-label">Updated:</span> {{formatDate .UpdatedAt}}
+                        </span>
+                        {{end}}
+                    </div>
+                    <div class="kb-actions">
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="viewKnowledgeBase('{{.VectorID}}', '{{.Name}}')">View</button>
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="editKnowledgeBase('{{.VectorID}}', '{{.Name}}', '{{.Description}}')">Edit</button>
+                        <form method="POST" action="/knowledge-bases/delete/{{.VectorID}}"
+                              onsubmit="return confirm('Are you sure you want to delete this knowledge base?')">
+                            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                            <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                        </form>
+                    </div>
+                </article>
                 {{end}}
-                <div class="kb-meta">
-                    {{if not .CreatedAt.IsZero}}
-                    <span class="meta-item">
-                        <span class="meta-label">Created:</span>
-                        {{formatDate .CreatedAt}}
-                    </span>
-                    {{end}}
-                    {{if not .UpdatedAt.IsZero}}
-                    <span class="meta-item">
-                        <span class="meta-label">Updated:</span>
-                        {{formatDate .UpdatedAt}}
-                    </span>
-                    {{end}}
-                </div>
-                <div class="kb-actions">
-                    <button type="button" class="btn btn-sm btn-secondary"
-                            onclick="viewKnowledgeBase('{{.VectorID}}', '{{.Name}}')">
-                        View
-                    </button>
-                    <button type="button" class="btn btn-sm btn-secondary"
-                            onclick="editKnowledgeBase('{{.VectorID}}', '{{.Name}}', '{{.Description}}')">
-                        Edit
-                    </button>
-                    <form method="POST" action="/knowledge-bases/delete/{{.VectorID}}"
-                          style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this knowledge base?')">
-                        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-                        <button type="submit" class="btn btn-sm btn-danger">Delete</button>
-                    </form>
-                </div>
+            </div>
+            {{else}}
+            <div class="empty-state">
+                <div class="empty-state-icon">📚</div>
+                <h3>No Knowledge Bases Yet</h3>
+                <p>Create your first knowledge base to give agents more context during calls.</p>
             </div>
             {{end}}
-        </div>
-        {{else}}
-        <div class="empty-state">
-            <p>No knowledge bases yet. Create one above to get started.</p>
-        </div>
-        {{end}}
+        </section>
     </div>
-</div>
+</main>
 
 <!-- View Modal -->
-<div id="viewModal" class="modal" style="display:none;">
-    <div class="modal-content modal-lg">
+<div id="viewModal" class="modal-backdrop is-hidden">
+    <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="viewModalTitle">
         <div class="modal-header">
             <h3 id="viewModalTitle">Knowledge Base Content</h3>
-            <button type="button" class="modal-close" onclick="closeViewModal()">&times;</button>
+            <button type="button" class="modal-close" aria-label="Close" onclick="hideModal('viewModal')">&times;</button>
         </div>
         <div class="modal-body">
             <div id="viewModalContent" class="kb-content-view">
@@ -118,17 +112,17 @@
             </div>
         </div>
         <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" onclick="closeViewModal()">Close</button>
+            <button type="button" class="btn btn-secondary" onclick="hideModal('viewModal')">Close</button>
         </div>
     </div>
 </div>
 
 <!-- Edit Modal -->
-<div id="editModal" class="modal" style="display:none;">
-    <div class="modal-content">
+<div id="editModal" class="modal-backdrop is-hidden">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="editModalTitle">
         <div class="modal-header">
-            <h3>Edit Knowledge Base</h3>
-            <button type="button" class="modal-close" onclick="closeEditModal()">&times;</button>
+            <h3 id="editModalTitle">Edit Knowledge Base</h3>
+            <button type="button" class="modal-close" aria-label="Close" onclick="hideModal('editModal')">&times;</button>
         </div>
         <form method="POST" action="/knowledge-bases/update" id="editForm">
             <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -144,212 +138,44 @@
                 </div>
                 <div class="form-group">
                     <label for="editText">Additional Content (append)</label>
-                    <textarea id="editText" name="text" rows="6"
-                              placeholder="Enter additional content to append to this knowledge base"></textarea>
+                    <textarea id="editText" name="text" rows="6" placeholder="Enter additional content to append to this knowledge base"></textarea>
                     <small>Leave empty to only update name/description</small>
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
-                <button type="submit" class="btn btn-primary">Save Changes</button>
+                <button type="button" class="btn btn-secondary" onclick="hideModal('editModal')">Cancel</button>
+                <button type="submit" class="btn">Save Changes</button>
             </div>
         </form>
     </div>
 </div>
 
-<style>
-.knowledge-bases-container {
-    display: grid;
-    gap: 2rem;
-}
-
-.create-kb-card {
-    background: var(--bg-secondary);
-    border-radius: var(--border-radius);
-    overflow: hidden;
-}
-
-.create-kb-card .card-header {
-    background: var(--bg-tertiary);
-    padding: 1rem 1.5rem;
-    border-bottom: 1px solid var(--border-color);
-}
-
-.create-kb-card .card-header h3 {
-    margin: 0;
-    font-size: 1.1rem;
-}
-
-.create-kb-card .card-body {
-    padding: 1.5rem;
-}
-
-.kb-form .form-group {
-    margin-bottom: 1.25rem;
-}
-
-.kb-form label {
-    display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 500;
-}
-
-.kb-form input[type="text"],
-.kb-form textarea {
-    width: 100%;
-    padding: 0.75rem;
-    border: 1px solid var(--border-color);
-    border-radius: var(--border-radius);
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    font-family: inherit;
-}
-
-.kb-form textarea {
-    resize: vertical;
-    min-height: 200px;
-}
-
-.kb-form small {
-    display: block;
-    margin-top: 0.25rem;
-    color: var(--text-muted);
-    font-size: 0.85rem;
-}
-
-.kb-list h3 {
-    margin-bottom: 1rem;
-    color: var(--text-primary);
-}
-
-.kb-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-    gap: 1rem;
-}
-
-.kb-card {
-    background: var(--bg-secondary);
-    border-radius: var(--border-radius);
-    padding: 1.25rem;
-    border: 1px solid var(--border-color);
-}
-
-.kb-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 0.75rem;
-    gap: 0.5rem;
-}
-
-.kb-header h4 {
-    margin: 0;
-    font-size: 1rem;
-    color: var(--text-primary);
-}
-
-.kb-id {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    font-family: monospace;
-    background: var(--bg-tertiary);
-    padding: 0.125rem 0.5rem;
-    border-radius: 4px;
-    flex-shrink: 0;
-    max-width: 120px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.kb-description {
-    margin: 0 0 1rem;
-    color: var(--text-secondary);
-    font-size: 0.9rem;
-    line-height: 1.4;
-}
-
-.kb-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
-    margin-bottom: 1rem;
-    font-size: 0.85rem;
-}
-
-.meta-item {
-    color: var(--text-muted);
-}
-
-.meta-label {
-    color: var(--text-secondary);
-}
-
-.kb-actions {
-    display: flex;
-    gap: 0.5rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid var(--border-color);
-}
-
-.kb-content-view {
-    background: var(--bg-tertiary);
-    padding: 1rem;
-    border-radius: var(--border-radius);
-    max-height: 400px;
-    overflow-y: auto;
-    white-space: pre-wrap;
-    font-family: monospace;
-    font-size: 0.9rem;
-    line-height: 1.5;
-}
-
-.empty-state {
-    text-align: center;
-    padding: 3rem;
-    color: var(--text-muted);
-    background: var(--bg-secondary);
-    border-radius: var(--border-radius);
-}
-
-.modal-lg {
-    max-width: 800px;
-}
-
-@media (max-width: 768px) {
-    .kb-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .kb-header {
-        flex-direction: column;
-    }
-
-    .kb-id {
-        max-width: none;
-    }
-}
-</style>
-
 <script>
+function showModal(id) {
+    var modal = document.getElementById(id);
+    modal.classList.remove('is-hidden');
+    modal.setAttribute('aria-hidden', 'false');
+}
+
+function hideModal(id) {
+    var modal = document.getElementById(id);
+    modal.classList.add('is-hidden');
+    modal.setAttribute('aria-hidden', 'true');
+}
+
 function viewKnowledgeBase(vectorId, name) {
     document.getElementById('viewModalTitle').textContent = name;
     document.getElementById('viewModalContent').textContent = 'Loading content...';
-    document.getElementById('viewModal').style.display = 'flex';
+    showModal('viewModal');
 
-    // Fetch content via HTMX or redirect
     fetch('/knowledge-bases/content/' + vectorId)
-        .then(response => response.text())
-        .then(content => {
+        .then(function(response) { return response.text(); })
+        .then(function(content) {
             document.getElementById('viewModalContent').textContent = content || 'No content available';
         })
-        .catch(err => {
+        .catch(function() {
             document.getElementById('viewModalContent').textContent = 'Failed to load content';
         });
-}
-
-function closeViewModal() {
-    document.getElementById('viewModal').style.display = 'none';
 }
 
 function editKnowledgeBase(vectorId, name, description) {
@@ -357,25 +183,22 @@ function editKnowledgeBase(vectorId, name, description) {
     document.getElementById('editName').value = name;
     document.getElementById('editDescription').value = description || '';
     document.getElementById('editText').value = '';
-    document.getElementById('editModal').style.display = 'flex';
+    showModal('editModal');
 }
 
-function closeEditModal() {
-    document.getElementById('editModal').style.display = 'none';
-}
-
-// Close modals when clicking outside
 document.addEventListener('click', function(e) {
-    if (e.target.classList.contains('modal')) {
-        e.target.style.display = 'none';
+    var backdrop = e.target.closest('.modal-backdrop');
+    if (backdrop && e.target === backdrop) {
+        hideModal(backdrop.id);
     }
 });
 
-// Close modals with Escape key
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
-        document.querySelectorAll('.modal').forEach(function(modal) {
-            modal.style.display = 'none';
+        document.querySelectorAll('.modal-backdrop').forEach(function(backdrop) {
+            if (!backdrop.classList.contains('is-hidden')) {
+                hideModal(backdrop.id);
+            }
         });
     }
 });

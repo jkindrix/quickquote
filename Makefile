@@ -303,7 +303,7 @@ prod-status:
 	@docker ps --filter "name=quickquote" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 	@echo ""
 	@echo "$(GREEN)Health Check:$(NC)"
-	@curl -s http://localhost:8080/health 2>/dev/null | jq . || echo "$(YELLOW)Service not responding on localhost:8080$(NC)"
+	@docker exec $(APP_CONTAINER) wget -qO- http://127.0.0.1:8080/health 2>/dev/null | jq . || echo "$(YELLOW)Service health endpoint unavailable from host$(NC)"
 
 ## prod-shell: Open shell in production app container
 prod-shell:

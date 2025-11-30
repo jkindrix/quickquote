@@ -29,36 +29,38 @@
     </form>
 
     <div class="card">
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>Caller</th>
-                    <th>Phone</th>
-                    <th>Status</th>
-                    <th>Duration</th>
-                    <th>Quote</th>
-                    <th>Date</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {{range .Calls}}
-                <tr>
-                    <td>{{if .CallerName}}{{.CallerName}}{{else}}Unknown{{end}}</td>
-                    <td>{{.PhoneNumber}}</td>
-                    <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
-                    <td>{{if .DurationSeconds}}{{.DurationSeconds}} sec{{else}}-{{end}}</td>
-                    <td>{{if and .QuoteSummary (ne .QuoteSummary "")}}Yes{{else}}No{{end}}</td>
-                    <td>{{formatTime .CreatedAt}}</td>
-                    <td><a href="/calls/{{.ID}}" class="btn btn-sm">View</a></td>
-                </tr>
-                {{else}}
-                <tr>
-                    <td colspan="7" style="text-align: center; color: #666;">No calls yet</td>
-                </tr>
-                {{end}}
-            </tbody>
-        </table>
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Caller</th>
+                        <th>Phone</th>
+                        <th>Status</th>
+                        <th>Duration</th>
+                        <th>Quote</th>
+                        <th>Date</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Calls}}
+                    <tr>
+                        <td>{{if .CallerName}}{{.CallerName}}{{else}}Unknown{{end}}</td>
+                        <td>{{.PhoneNumber}}</td>
+                        <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
+                        <td>{{if .DurationSeconds}}{{.DurationSeconds}} sec{{else}}-{{end}}</td>
+                        <td>{{if and .QuoteSummary (ne .QuoteSummary "")}}Yes{{else}}No{{end}}</td>
+                        <td>{{formatTime .CreatedAt}}</td>
+                        <td><a href="/calls/{{.ID}}" class="btn btn-sm">View</a></td>
+                    </tr>
+                    {{else}}
+                    <tr>
+                        <td colspan="7" class="table-empty">No calls yet</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
 
         {{if gt .TotalPages 1}}
         <div class="pagination">

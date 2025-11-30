@@ -3,18 +3,46 @@
     <div class="nav-brand">
         <a href="/dashboard">QuickQuote</a>
     </div>
-    <div class="nav-links">
-        <a href="/dashboard" class="{{if eq .ActiveNav "dashboard"}}active{{end}}">Dashboard</a>
-        <a href="/calls" class="{{if eq .ActiveNav "calls"}}active{{end}}">Calls</a>
-        <a href="/presets" class="{{if eq .ActiveNav "presets"}}active{{end}}">Presets</a>
-        <a href="/phone-numbers" class="{{if eq .ActiveNav "phone-numbers"}}active{{end}}">Numbers</a>
-        <a href="/voices" class="{{if eq .ActiveNav "voices"}}active{{end}}">Voices</a>
-        <a href="/knowledge-bases" class="{{if eq .ActiveNav "knowledge-bases"}}active{{end}}">Knowledge</a>
-        <a href="/settings" class="{{if eq .ActiveNav "settings"}}active{{end}}">Settings</a>
-    </div>
-    <div class="nav-user">
-        <span>{{.User.Email}}</span>
-        <a href="/logout" class="btn btn-sm btn-outline">Logout</a>
+    <button class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false" data-nav-toggle>
+        <span></span>
+        <span></span>
+        <span></span>
+    </button>
+    <div class="nav-menu" data-nav-menu>
+        <div class="nav-links">
+            <a href="/dashboard" class="{{if eq .ActiveNav "dashboard"}}active{{end}}">Dashboard</a>
+            <a href="/calls" class="{{if eq .ActiveNav "calls"}}active{{end}}">Calls</a>
+            <a href="/presets" class="{{if eq .ActiveNav "presets"}}active{{end}}">Presets</a>
+            <a href="/phone-numbers" class="{{if eq .ActiveNav "phone-numbers"}}active{{end}}">Numbers</a>
+            <a href="/voices" class="{{if eq .ActiveNav "voices"}}active{{end}}">Voices</a>
+            <a href="/knowledge-bases" class="{{if eq .ActiveNav "knowledge-bases"}}active{{end}}">Knowledge</a>
+            <a href="/settings" class="{{if eq .ActiveNav "settings"}}active{{end}}">Settings</a>
+        </div>
+        <div class="nav-user">
+            <span class="nav-user-email">{{.User.Email}}</span>
+            <a href="/logout" class="btn btn-sm btn-outline">Logout</a>
+        </div>
     </div>
 </nav>
+<script>
+(function() {
+    const navToggle = document.querySelector('[data-nav-toggle]');
+    const navMenu = document.querySelector('[data-nav-menu]');
+    if (!navToggle || !navMenu) return;
+
+    function closeMenuOnResize() {
+        if (window.innerWidth > 960) {
+            navMenu.classList.remove('is-open');
+            navToggle.setAttribute('aria-expanded', 'false');
+        }
+    }
+
+    navToggle.addEventListener('click', function() {
+        const isOpen = navMenu.classList.toggle('is-open');
+        navToggle.setAttribute('aria-expanded', String(isOpen));
+    });
+
+    window.addEventListener('resize', closeMenuOnResize);
+})();
+</script>
 {{end}}

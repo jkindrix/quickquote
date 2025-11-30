@@ -64,7 +64,7 @@
                     </div>
                     {{end}}
                 </div>
-                <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
+                <div class="flex gap-sm mt-1">
                     <a href="/phone-numbers/{{.ID}}/configure" class="btn btn-sm">Configure</a>
                     <button class="btn btn-sm btn-secondary" onclick="testNumber('{{.ID}}')">Test Call</button>
                 </div>
@@ -76,53 +76,55 @@
             <div class="empty-state-icon">&#128222;</div>
             <h3>No Phone Numbers</h3>
             <p>Purchase a phone number to start receiving inbound calls</p>
-            <a href="/phone-numbers/purchase" class="btn" style="margin-top: 1rem;">Purchase Number</a>
+            <a href="/phone-numbers/purchase" class="btn mt-1">Purchase Number</a>
         </div>
         {{end}}
     </div>
 
     {{if .PhoneNumbers}}
-    <div class="card" style="margin-top: 1.5rem;">
+    <div class="card mt-2">
         <h2>Blocked Numbers</h2>
-        <p style="color: #666; margin-bottom: 1rem;">Numbers blocked from calling your lines</p>
+        <p class="text-muted mb-1">Numbers blocked from calling your lines</p>
 
         {{if .BlockedNumbers}}
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>Phone Number</th>
-                    <th>Reason</th>
-                    <th>Blocked</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {{range .BlockedNumbers}}
-                <tr>
-                    <td>{{.PhoneNumber}}</td>
-                    <td>{{if .Reason}}{{.Reason}}{{else}}-{{end}}</td>
-                    <td>{{formatTime .CreatedAt}}</td>
-                    <td>
-                        <form method="POST" action="/phone-numbers/unblock/{{.ID}}" style="display: inline;">
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Phone Number</th>
+                        <th>Reason</th>
+                        <th>Blocked</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .BlockedNumbers}}
+                    <tr>
+                        <td>{{.PhoneNumber}}</td>
+                        <td>{{if .Reason}}{{.Reason}}{{else}}-{{end}}</td>
+                        <td>{{formatTime .CreatedAt}}</td>
+                        <td>
+                        <form method="POST" action="/phone-numbers/unblock/{{.ID}}" class="form-inline">
                             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
                             <button type="submit" class="btn btn-sm btn-danger">Unblock</button>
                         </form>
                     </td>
                 </tr>
-                {{end}}
-            </tbody>
-        </table>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
         {{else}}
-        <p style="text-align: center; padding: 1rem; color: #999;">No blocked numbers</p>
+        <p class="text-muted text-center py-1">No blocked numbers</p>
         {{end}}
 
-        <form method="POST" action="/phone-numbers/block" style="margin-top: 1rem; display: flex; gap: 0.5rem; align-items: flex-end;">
+        <form method="POST" action="/phone-numbers/block" class="inline-form mt-1">
             <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-            <div class="form-group" style="flex: 1; margin: 0;">
+            <div class="form-group">
                 <label for="block_number">Block a Number</label>
                 <input type="text" id="block_number" name="phone_number" placeholder="+1234567890">
             </div>
-            <div class="form-group" style="flex: 1; margin: 0;">
+            <div class="form-group">
                 <label for="block_reason">Reason (optional)</label>
                 <input type="text" id="block_reason" name="reason" placeholder="Spam caller">
             </div>

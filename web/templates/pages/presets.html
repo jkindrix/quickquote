@@ -15,18 +15,18 @@
         return confirm('Delete preset "' + presetName + '"? This cannot be undone.');
     }
     function showCreateModal() {
-        document.getElementById('createModal').style.display = 'flex';
+        document.getElementById('createModal').classList.remove('is-hidden');
     }
     function hideCreateModal() {
-        document.getElementById('createModal').style.display = 'none';
+        document.getElementById('createModal').classList.add('is-hidden');
     }
     function showApplyModal(presetId, presetName) {
         document.getElementById('applyPresetId').value = presetId;
         document.getElementById('applyPresetName').textContent = presetName;
-        document.getElementById('applyModal').style.display = 'flex';
+        document.getElementById('applyModal').classList.remove('is-hidden');
     }
     function hideApplyModal() {
-        document.getElementById('applyModal').style.display = 'none';
+        document.getElementById('applyModal').classList.add('is-hidden');
     }
 </script>
 {{end}}
@@ -99,14 +99,14 @@
             <div class="preset-actions">
                 <button class="btn btn-sm" onclick="showApplyModal('{{.ID}}', '{{.Name}}')">Apply to Number</button>
                 {{if not .IsDefault}}
-                <form method="POST" action="/presets/{{.ID}}/default" style="display: inline;">
+                <form method="POST" action="/presets/{{.ID}}/default" class="form-inline">
                     <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
                     <button type="submit" class="btn btn-sm btn-secondary">Set Default</button>
                 </form>
                 {{end}}
                 <a href="/presets/{{.ID}}/edit" class="btn btn-sm btn-secondary">Edit</a>
                 {{if not .IsDefault}}
-                <form method="POST" action="/presets/{{.ID}}/delete" style="display: inline;" onsubmit="return confirmDelete('{{.Name}}');">
+                <form method="POST" action="/presets/{{.ID}}/delete" class="form-inline" onsubmit="return confirmDelete('{{.Name}}');">
                     <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
                     <button type="submit" class="btn btn-sm btn-danger">Delete</button>
                 </form>
@@ -128,8 +128,8 @@
 </main>
 
 <!-- Create Preset Modal -->
-<div id="createModal" class="modal-backdrop" style="display: none;">
-    <div class="modal" style="max-width: 700px;">
+<div id="createModal" class="modal-backdrop is-hidden">
+    <div class="modal modal-wide">
         <div class="modal-header">
             <h2>Create Preset</h2>
             <button class="modal-close" onclick="hideCreateModal()">&times;</button>
@@ -149,7 +149,7 @@
 
             <div class="form-group">
                 <label for="task">Agent Task / Prompt *</label>
-                <textarea id="task" name="task" required style="min-height: 200px;" placeholder="You are Alex, a friendly project consultant at QuickQuote. Your goal is to have a natural conversation to understand the caller's software project needs..."></textarea>
+                <textarea id="task" name="task" required class="textarea-lg" placeholder="You are Alex, a friendly project consultant at QuickQuote. Your goal is to have a natural conversation to understand the caller's software project needs..."></textarea>
                 <span class="form-hint">Instructions for how the AI agent should behave during calls</span>
             </div>
 
@@ -251,7 +251,7 @@
 </div>
 
 <!-- Apply to Number Modal -->
-<div id="applyModal" class="modal-backdrop" style="display: none;">
+<div id="applyModal" class="modal-backdrop is-hidden">
     <div class="modal">
         <div class="modal-header">
             <h2>Apply Preset to Phone Number</h2>

@@ -85,9 +85,9 @@
             {{end}}
         </div>
         {{if .Call.ProviderMetadata}}
-        <details style="margin-top: 1rem;">
+        <details class="mt-1">
             <summary>Raw Provider Metadata</summary>
-            <pre style="margin-top: 0.5rem;">{{printf "%+v" .Call.ProviderMetadata}}</pre>
+            <pre class="mt-05">{{printf "%+v" .Call.ProviderMetadata}}</pre>
         </details>
         {{end}}
     </div>
@@ -108,7 +108,7 @@
               hx-target="#quote-section"
               hx-swap="outerHTML"
               hx-indicator="#quote-loading"
-              style="margin-top: 1rem;">
+              class="mt-1">
             <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
             <button type="submit" class="btn btn-secondary">
                 Regenerate Quote

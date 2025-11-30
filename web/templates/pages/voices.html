@@ -33,7 +33,7 @@
     {{end}}
 
     <div class="card">
-        <h2 style="margin-bottom: 1rem;">Available Voices</h2>
+        <h2 class="section-title">Available Voices</h2>
 
         <div class="voice-grid">
             {{range .Voices}}
@@ -53,7 +53,7 @@
                         <span class="play-icon">&#9658;</span> Preview
                     </button>
                     {{end}}
-                    <form method="POST" action="/voices/select" style="display: inline;">
+                    <form method="POST" action="/voices/select" class="form-inline">
                         <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
                         <input type="hidden" name="voice_id" value="{{.ID}}">
                         {{if eq .ID $.CurrentVoice}}
@@ -65,7 +65,7 @@
                 </div>
             </div>
             {{else}}
-            <div class="empty-state" style="grid-column: 1 / -1;">
+            <div class="empty-state grid-span-full">
                 <div class="empty-state-icon">&#127908;</div>
                 <h3>No Voices Available</h3>
                 <p>Unable to load voices from the API</p>
@@ -74,9 +74,9 @@
         </div>
     </div>
 
-    <div class="card" style="margin-top: 1.5rem;">
+    <div class="card mt-2">
         <h2>Voice Settings</h2>
-        <p style="color: #666; margin-bottom: 1rem;">Fine-tune how the selected voice sounds</p>
+        <p class="text-muted mb-1">Fine-tune how the selected voice sounds</p>
 
         <form method="POST" action="/voices/settings">
             <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -122,7 +122,7 @@
                 </div>
             </div>
 
-            <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1rem;">
+            <div class="flex justify-end gap-md mt-1">
                 <button type="submit" class="btn">Save Voice Settings</button>
             </div>
         </form>

@@ -9,26 +9,28 @@
     {{if .QuoteJobs}}
     <div class="card">
         <h2>Quote Job Queue</h2>
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>Status</th>
-                    <th>Jobs</th>
-                </tr>
-            </thead>
-            <tbody>
-                {{range $status, $count := .QuoteJobs}}
-                <tr>
-                    <td>{{humanize $status}}</td>
-                    <td>{{$count}}</td>
-                </tr>
-                {{else}}
-                <tr>
-                    <td colspan="2" style="text-align:center;color:#666;">No queued jobs</td>
-                </tr>
-                {{end}}
-            </tbody>
-        </table>
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Status</th>
+                        <th>Jobs</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range $status, $count := .QuoteJobs}}
+                    <tr>
+                        <td>{{humanize $status}}</td>
+                        <td>{{$count}}</td>
+                    </tr>
+                    {{else}}
+                    <tr>
+                        <td colspan="2" class="table-empty">No queued jobs</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
     </div>
     {{end}}
 
@@ -65,49 +67,51 @@
     <div class="detail-grid">
         <div class="card">
             <h2>Cost Breakdown</h2>
-            <table class="table">
-                <thead>
-                    <tr>
-                        <th>Category</th>
-                        <th>Usage</th>
-                        <th>Cost</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td>Inbound Calls</td>
-                        <td>{{.Usage.InboundCalls}} calls</td>
-                        <td>${{printf "%.2f" .Usage.InboundCost}}</td>
-                    </tr>
-                    <tr>
-                        <td>Outbound Calls</td>
-                        <td>{{.Usage.OutboundCalls}} calls</td>
-                        <td>${{printf "%.2f" .Usage.OutboundCost}}</td>
-                    </tr>
-                    <tr>
-                        <td>Transcription</td>
-                        <td>{{printf "%.1f" .Usage.TranscriptionMinutes}} min</td>
-                        <td>${{printf "%.2f" .Usage.TranscriptionCost}}</td>
-                    </tr>
-                    <tr>
-                        <td>Analysis</td>
-                        <td>{{.Usage.AnalysisCount}} analyses</td>
-                        <td>${{printf "%.2f" .Usage.AnalysisCost}}</td>
-                    </tr>
-                    <tr>
-                        <td>Phone Numbers</td>
-                        <td>{{.Usage.PhoneNumberCount}} numbers</td>
-                        <td>${{printf "%.2f" .Usage.PhoneNumberCost}}</td>
-                    </tr>
-                </tbody>
-                <tfoot>
-                    <tr style="font-weight: 600;">
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th>Usage</th>
+                            <th>Cost</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Inbound Calls</td>
+                            <td>{{.Usage.InboundCalls}} calls</td>
+                            <td>${{printf "%.2f" .Usage.InboundCost}}</td>
+                        </tr>
+                        <tr>
+                            <td>Outbound Calls</td>
+                            <td>{{.Usage.OutboundCalls}} calls</td>
+                            <td>${{printf "%.2f" .Usage.OutboundCost}}</td>
+                        </tr>
+                        <tr>
+                            <td>Transcription</td>
+                            <td>{{printf "%.1f" .Usage.TranscriptionMinutes}} min</td>
+                            <td>${{printf "%.2f" .Usage.TranscriptionCost}}</td>
+                        </tr>
+                        <tr>
+                            <td>Analysis</td>
+                            <td>{{.Usage.AnalysisCount}} analyses</td>
+                            <td>${{printf "%.2f" .Usage.AnalysisCost}}</td>
+                        </tr>
+                        <tr>
+                            <td>Phone Numbers</td>
+                            <td>{{.Usage.PhoneNumberCount}} numbers</td>
+                            <td>${{printf "%.2f" .Usage.PhoneNumberCost}}</td>
+                        </tr>
+                    </tbody>
+                    <tfoot>
+                    <tr class="table-total">
                         <td>Total</td>
                         <td></td>
                         <td>${{printf "%.2f" .Usage.TotalCost}}</td>
                     </tr>
-                </tfoot>
-            </table>
+                    </tfoot>
+                </table>
+            </div>
         </div>
 
         <div class="card">
@@ -133,49 +137,51 @@
                     <span class="form-hint">Maximum calls per day</span>
                 </div>
 
-                <button type="submit" class="btn" style="margin-top: 1rem;">Update Limits</button>
+                <button type="submit" class="btn mt-1">Update Limits</button>
             </form>
         </div>
     </div>
 
-    <div class="card" style="margin-top: 1.5rem;">
+    <div class="card mt-2">
         <div class="card-header">
             <h2>Daily Usage (Last 7 Days)</h2>
         </div>
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>Date</th>
-                    <th>Calls</th>
-                    <th>Minutes</th>
-                    <th>Cost</th>
-                </tr>
-            </thead>
-            <tbody>
-                {{range .DailyUsage}}
-                <tr>
-                    <td>{{formatDate .Date}}</td>
-                    <td>{{.Calls}}</td>
-                    <td>{{printf "%.1f" .Minutes}}</td>
-                    <td>${{printf "%.2f" .Cost}}</td>
-                </tr>
-                {{else}}
-                <tr>
-                    <td colspan="4" style="text-align: center; color: #666;">No usage data yet</td>
-                </tr>
-                {{end}}
-            </tbody>
-        </table>
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Calls</th>
+                        <th>Minutes</th>
+                        <th>Cost</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .DailyUsage}}
+                    <tr>
+                        <td>{{formatDate .Date}}</td>
+                        <td>{{.Calls}}</td>
+                        <td>{{printf "%.1f" .Minutes}}</td>
+                        <td>${{printf "%.2f" .Cost}}</td>
+                    </tr>
+                    {{else}}
+                    <tr>
+                        <td colspan="4" class="table-empty">No usage data yet</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
     </div>
 
     {{if .Alerts}}
-    <div class="card" style="margin-top: 1.5rem;">
+    <div class="card mt-2">
         <h2>Active Alerts</h2>
         {{range .Alerts}}
-        <div class="alert {{if eq .Type "warning"}}alert-warning{{else}}alert-error{{end}}" style="display: flex; justify-content: space-between; align-items: center;">
+        <div class="alert {{if eq .Type "warning"}}alert-warning{{else}}alert-error{{end}} alert-inline">
             <div>
                 <strong>{{.Title}}</strong>
-                <p style="margin: 0.25rem 0 0;">{{.Message}}</p>
+                <p class="mt-xs">{{.Message}}</p>
             </div>
             <form method="POST" action="/usage/alerts/{{.ID}}/acknowledge">
                 <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
@@ -186,12 +192,12 @@
     </div>
     {{end}}
 
-    <div class="card" style="margin-top: 1.5rem;">
+    <div class="card mt-2">
         <h2>Pricing Information</h2>
-        <p style="color: #666; margin-bottom: 1rem;">Current rates for Bland AI services</p>
+        <p class="text-muted mb-1">Current rates for Bland AI services</p>
 
         <div class="detail-grid">
-            <div>
+            <div class="table-responsive">
                 <table class="table">
                     <tbody>
                         <tr>
@@ -209,7 +215,7 @@
                     </tbody>
                 </table>
             </div>
-            <div>
+            <div class="table-responsive">
                 <table class="table">
                     <tbody>
                         <tr>
